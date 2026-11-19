@@ -1,0 +1,24 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Local data and run output (never commit mail)
+data/
+runs/
+*.eml
+
+# Secrets
+.env
+.env.*
+!.env.example
+
+# Run output (contains senders and subjects)
+result/
+out/
