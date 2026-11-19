@@ -1,0 +1,36 @@
+# Settings for `taxonomail run --config <file>`. Every value shown is the default; leave out
+# what you don't change.
+
+[naming]                 # names each cluster
+provider = "anthropic"   # "anthropic" or "openai" (also any OpenAI-compatible server)
+model = "claude-sonnet-5-5"
+max_tokens = 1000
+
+[consolidation]          # merges the named clusters into folders
+provider = "anthropic"
+model = "claude-opus-5-5"
+max_tokens = 16000
+
+# A local model through an OpenAI-compatible server, e.g. Ollama:
+# [naming]
+# provider = "openai"
+# model = "qwen3:32b"
+# base_url = "http://localhost:11434/v1"
+
+[embedding]              # any OpenAI-compatible embeddings API
+model = "text-embedding-3-small"
+# base_url = "http://localhost:11434/v1"   # e.g. Ollama; default: OpenAI
+api_key_env = "OPENAI_API_KEY"
+batch_size = 64          # texts per request
+
+[clustering]
+n_neighbors = 15         # UMAP
+n_components = 5         # UMAP
+min_cluster_size = 10    # HDBSCAN
+representatives = 8      # mails per cluster shown to the naming model
+keywords = 10            # BERTopic keywords per cluster
+seed = 0                 # UMAP random state
+
+[taxonomy]
+min_folders = 8
+max_folders = 25
