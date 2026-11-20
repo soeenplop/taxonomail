@@ -34,7 +34,7 @@ of each mail) and `clusters.json` (the clusters behind the folders).
    missing, unknown or in two folders), duplicate folder ids or too many or too few folders
    is sent back once with the problems listed. If the folder count is still out of range,
    the run stops. A cluster the plan still leaves out goes, as a whole, to the folder whose
-   mails are most similar on average.
+   mean vector is most similar (cosine) to the cluster's mean vector.
 5. **Assign.** Each clustered mail goes to its cluster's folder. Each noise mail goes to the
    folder whose mean vector is closest to it (`method: nearest` in `assignments.jsonl`).
 
