@@ -6,11 +6,11 @@ import tomllib
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class _Section(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
 
 class LLMConfig(_Section):
@@ -29,6 +29,20 @@ class LLMConfig(_Section):
     max_tokens: int = 8000
 
 
+class NamingConfig(LLMConfig):
+    """Defaults for the folder-naming step."""
+
+    model: str = "claude-sonnet-5-5"
+    max_tokens: int = 1000
+
+
+class ConsolidationConfig(LLMConfig):
+    """Defaults for the taxonomy-consolidation step."""
+
+    model: str = "claude-opus-5-5"
+    max_tokens: int = 16000
+
+
 class EmbeddingConfig(_Section):
     """An OpenAI-compatible embeddings endpoint (``POST /v1/embeddings``)."""
 
@@ -39,15 +53,15 @@ class EmbeddingConfig(_Section):
     api_key_env: str = Field(
         default="OPENAI_API_KEY", description="Environment variable with the API key."
     )
-    batch_size: int = 64
+    batch_size: int = Field(default=64, ge=1)
 
 
 class ClusteringConfig(_Section):
     """BERTopic: UMAP and HDBSCAN settings."""
 
-    n_neighbors: int = 15
+    n_neighbors: int = Field(default=15, ge=2)
     n_components: int = 5
-    min_cluster_size: int = 10
+    min_cluster_size: int = Field(default=10, ge=2)
     representatives: int = 8
     keywords: int = 10
     seed: int = 0
@@ -59,12 +73,18 @@ class TaxonomyConfig(_Section):
     min_folders: int = 8
     max_folders: int = 25
 
+    @model_validator(mode="after")
+    def _check_range(self) -> TaxonomyConfig:
+        if self.min_folders > self.max_folders:
+            raise ValueError("min_folders must not exceed max_folders")
+        return self
+
 
 class Settings(_Section):
     """All settings."""
 
-    naming: LLMConfig = LLMConfig(model="claude-sonnet-5-5", max_tokens=1000)
-    consolidation: LLMConfig = LLMConfig(model="claude-opus-5-5", max_tokens=16000)
+    naming: NamingConfig = NamingConfig()
+    consolidation: ConsolidationConfig = ConsolidationConfig()
     embedding: EmbeddingConfig = EmbeddingConfig()
     clustering: ClusteringConfig = ClusteringConfig()
     taxonomy: TaxonomyConfig = TaxonomyConfig()
