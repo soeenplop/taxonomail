@@ -13,7 +13,9 @@ class _Section(BaseModel):
 
 
 OPENAI_URL = "https://api.openai.com/v1"
-ENV_NAME = r"^[A-Za-z_][A-Za-z0-9_]*$"
+# Upper-case variable names only, so a pasted key (mixed case, "-") fails validation instead
+# of ending up in an error message.
+ENV_NAME = r"^[A-Z_][A-Z0-9_]{0,63}$"
 
 
 class LLMConfig(_Section):
@@ -21,7 +23,7 @@ class LLMConfig(_Section):
 
     model: str
     base_url: str = OPENAI_URL
-    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME)
+    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME, repr=False)
     """Name of the environment variable that holds the key, never the key itself."""
     max_tokens: int = 8000
 
@@ -45,7 +47,7 @@ class EmbeddingConfig(_Section):
 
     model: str = "text-embedding-3-small"
     base_url: str = OPENAI_URL
-    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME)
+    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME, repr=False)
     """Name of the environment variable that holds the key, never the key itself."""
     batch_size: int = Field(default=64, ge=1)
 

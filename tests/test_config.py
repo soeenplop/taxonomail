@@ -42,11 +42,12 @@ def test_api_key_env_defaults_to_openai_and_must_be_a_variable_name(tmp_path: Pa
     loaded = load_settings(path)
     assert loaded.naming.api_key_env == "SCW_SECRET_KEY"
     assert loaded.consolidation.api_key_env == "OPENAI_API_KEY"
-    secret = "sk-proj-synthetic-key"
-    path.write_text(f'[embedding]\napi_key_env = "{secret}"\n')
-    with pytest.raises(ValidationError) as error:
-        load_settings(path)
-    assert secret not in str(error.value)
+    for secret in ("sk-proj-synthetic-key", "AbC123syntheticKey456", "A" * 65, "lower_case"):
+        path.write_text(f'[embedding]\napi_key_env = "{secret}"\n')
+        with pytest.raises(ValidationError) as error:
+            load_settings(path)
+        assert secret not in str(error.value)
+    assert "KEY_NAME" not in repr(Settings.model_validate({"naming": {"api_key_env": "KEY_NAME"}}))
 
 
 def test_language_defaults_to_english_and_must_be_a_name() -> None:

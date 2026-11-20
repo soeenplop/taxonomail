@@ -72,10 +72,21 @@ instead of a spectral layout. All settings are in the `[clustering]` section of 
 
 Every step (embedding, naming, consolidation) has its own `base_url` and `api_key_env`, so
 any OpenAI-compatible endpoint works: OpenAI, Ollama, Scaleway, and so on. `api_key_env`
-names the environment variable that holds the step's key and defaults to `OPENAI_API_KEY`;
-each key is sent only to its step's endpoint. Set models, endpoints and key variables in a
-TOML file passed with `--config` (see [taxonomail.example.toml](taxonomail.example.toml))
-and the keys in `.env` (see [.env.example](.env.example)). `.env` is read from the working directory or a
+names the environment variable (upper case) that holds the step's key and defaults to
+`OPENAI_API_KEY`. A step sends its key to its own `base_url`, so steps that share a
+variable share that key: when you point a step at another provider, give it its own
+variable too:
+
+```toml
+[embedding]
+model = "qwen3-embedding-8b"
+base_url = "https://api.scaleway.ai/v1"
+api_key_env = "SCW_SECRET_KEY"
+```
+
+Set models, endpoints and key variables in a TOML file passed with `--config` (see
+[taxonomail.example.toml](taxonomail.example.toml)) and the keys in `.env` (see
+[.env.example](.env.example)). `.env` is read from the working directory or a
 parent. IMAP always uses TLS.
 
 Folder and cluster names and descriptions are in English unless you set another language,
