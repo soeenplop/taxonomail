@@ -13,6 +13,7 @@ class _Section(BaseModel):
 
 
 OPENAI_URL = "https://api.openai.com/v1"
+ENV_NAME = r"^[A-Za-z_][A-Za-z0-9_]*$"
 
 
 class LLMConfig(_Section):
@@ -20,6 +21,8 @@ class LLMConfig(_Section):
 
     model: str
     base_url: str = OPENAI_URL
+    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME)
+    """Name of the environment variable that holds the key, never the key itself."""
     max_tokens: int = 8000
 
 
@@ -42,6 +45,8 @@ class EmbeddingConfig(_Section):
 
     model: str = "text-embedding-3-small"
     base_url: str = OPENAI_URL
+    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME)
+    """Name of the environment variable that holds the key, never the key itself."""
     batch_size: int = Field(default=64, ge=1)
 
 
