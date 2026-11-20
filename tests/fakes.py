@@ -1,8 +1,17 @@
-"""Synthetic mail for tests."""
+"""Synthetic mail and fakes for the embedder, the clusterer and the LLM."""
 
 from __future__ import annotations
 
+import json
+import re
+from collections.abc import Callable, Sequence
 from email.message import EmailMessage
+
+import numpy as np
+
+from taxonomail.clustering import NOISE, Clusters, Vectors
+
+TOPICS = ("invoices", "travel", "club")
 
 
 def raw_mail(
@@ -16,3 +25,65 @@ def raw_mail(
     message["Message-ID"] = f"<m{n}@example.org>"
     message.set_content(body)
     return bytes(message)
+
+
+def topic_of(text: str) -> str:
+    """The first word of the subject line in an embedded text."""
+    match = re.search(r"Subject: (\w+)", text)
+    return match.group(1) if match else ""
+
+
+class FakeEmbedder:
+    """One axis per topic; mails without a known topic get a mixed vector."""
+
+    def embed(self, texts: Sequence[str]) -> Vectors:
+        rows = []
+        for text in texts:
+            topic = topic_of(text)
+            row = np.full(len(TOPICS), 0.1, dtype=np.float32)
+            if topic in TOPICS:
+                row[TOPICS.index(topic)] = 1.0
+            rows.append(row / np.linalg.norm(row))
+        return np.stack(rows)
+
+
+class FakeClusterer:
+    """Cluster = index of the subject's topic word; anything else is noise."""
+
+    def fit(self, docs: Sequence[str], vectors: Vectors) -> Clusters:
+        labels = [TOPICS.index(t) if (t := topic_of(d)) in TOPICS else NOISE for d in docs]
+        keywords = {i: [TOPICS[i], "mail"] for i in set(labels) - {NOISE}}
+        return Clusters(labels=labels, keywords=keywords)
+
+
+Plan = Callable[[list[int]], dict[str, object]]
+
+
+def one_folder_per_cluster(cluster_ids: list[int]) -> dict[str, object]:
+    return {
+        "folders": [
+            {"id": TOPICS[c], "name": TOPICS[c].title(), "description": "d", "clusters": [c]}
+            for c in cluster_ids
+        ]
+    }
+
+
+class FakeLLM:
+    """Answers naming and consolidation requests from the prompt text; records every call."""
+
+    def __init__(self, plans: Sequence[Plan] = (one_folder_per_cluster,)) -> None:
+        self.plans = list(plans)
+        self.calls: list[tuple[str, list[dict[str, str]]]] = []
+
+    def chat(self, system: str, messages: list[dict[str, str]]) -> str:
+        self.calls.append((system, messages))
+        user = messages[0]["content"]
+        if "Representative mails" in user:
+            topic = re.search(r"Keywords: <mail>\"(\w+)", user)
+            word = topic.group(1) if topic else "unknown"
+            return json.dumps({"name": f"{word} mails", "description": f"Mails about {word}."})
+        listed = re.search(r"exactly one folder: ([\d, ]+)", user)
+        assert listed is not None
+        ids = [int(i) for i in listed.group(1).split(",")]
+        plan = self.plans.pop(0) if len(self.plans) > 1 else self.plans[0]
+        return "```json\n" + json.dumps(plan(ids)) + "\n```"
