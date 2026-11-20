@@ -20,48 +20,52 @@ of each mail) and `clusters.json` (the clusters behind the folders).
 
 ## How it works
 
-1. **Embed.** Each mail becomes one text (sender domain, subject, body; at most 8000 bytes)
-   and is sent to the embedding API. The resulting vectors are normalized, so similar mails
-   point in similar directions.
+1. **Embed.** The embedding API receives each mail's sender domain, subject and first 1500
+   body characters, capped together at 8000 UTF-8 bytes. The returned vectors are
+   L2-normalized, so cosine similarity compares mails.
 2. **Cluster.** [BERTopic](https://maartengr.github.io/BERTopic/) groups the vectors in
    two steps, then labels the groups (see [Clustering](#clustering) below).
-3. **Name.** For each cluster, the naming model sees its keywords and the `representatives`
-   mails closest to the cluster's mean (sender domain, subject, first 500 characters of the
-   body) and returns a name and description.
+3. **Name.** For each cluster, the naming model sees its keywords and up to `representatives`
+   mails closest to the cluster's mean (sender domain, subject, first 500 body characters)
+   and returns a name and description.
 4. **Merge.** The consolidation model sees every cluster's name, description, size and
-   keywords and groups the clusters into between `min_folders` and `max_folders` folders. An
-   invalid plan (a cluster missing, in two folders or unknown, too many or too few folders) is
-   sent back once with the problems listed. Clusters a plan still leaves out go to the folder
-   whose mails are most similar.
+   keywords and groups the clusters into between `min_folders` and `max_folders` folders;
+   the minimum is capped at the number of clusters. A plan with mapping errors (a cluster
+   missing, unknown or in two folders), duplicate folder ids or too many or too few folders
+   is sent back once with the problems listed. If the folder count is still out of range,
+   the run stops. A cluster the plan still leaves out goes, as a whole, to the folder whose
+   mails are most similar on average.
 5. **Assign.** Each clustered mail goes to its cluster's folder. Each noise mail goes to the
    folder whose mean vector is closest to it (`method: nearest` in `assignments.jsonl`).
 
 ### Clustering
 
-Embedding vectors have hundreds or thousands of dimensions. In that many dimensions all
-distances look alike, so density-based clustering works poorly on them directly. BERTopic
-therefore first reduces them, then clusters the reduced vectors:
+Density is hard to estimate in high-dimensional embedding space, so BERTopic first reduces
+the vectors, then clusters the reduced ones:
 
-- **[UMAP](https://umap-learn.readthedocs.io/)** builds a graph that links every mail to its
-  `n_neighbors` most similar mails (cosine similarity) and lays that graph out in
-  `n_components` dimensions so that neighbors stay close. Small `n_neighbors` keeps fine,
-  local structure; large values favor the broad picture. `min_dist = 0` lets similar mails
-  pack tightly, which helps the next step. UMAP's randomness is fixed by `seed`, so the same
-  mails give the same clusters.
+- **[UMAP](https://umap-learn.readthedocs.io/)** builds a graph of cosine neighbors, with
+  `n_neighbors` setting the neighborhood size, and lays it out in `n_components` dimensions
+  so that neighbors stay close. Small `n_neighbors` keeps fine, local structure; large values
+  favor the broad picture. `min_dist` is fixed at 0 so similar mails pack tightly, which
+  helps the next step. `seed` makes the layout reproducible for the same mails in the same
+  order, with the same embedding model and software versions.
 - **[HDBSCAN](https://hdbscan.readthedocs.io/)** looks for regions where mails lie densely
   together, separated by sparser space. It builds a hierarchy of such regions and keeps the
   most stable ones that hold at least `min_cluster_size` mails. Unlike k-means, it does not
   need the number of clusters in advance, and it does not force every mail into a cluster:
-  mails in sparse regions become noise (cluster `-1`). Smaller `min_cluster_size` gives
-  more, smaller clusters and less noise; larger values give fewer, broader ones.
-- **Keywords**: BERTopic joins the mails of each cluster into one document and ranks words by
-  class-based TF-IDF (c-TF-IDF): frequent in this cluster, rare in the others. The top
-  `keywords` words per cluster go to the naming model.
+  mails in sparse regions become noise (cluster `-1`). `min_cluster_size` sets the smallest
+  allowed cluster and, since `min_samples` defaults to it, also how dense a region must be;
+  lowering it allows smaller clusters, but its effect on the number of clusters and on noise
+  depends on the mailbox.
+- **Keywords**: BERTopic joins the mails of each cluster into one document and scores words
+  with class-based TF-IDF (c-TF-IDF), which favors words frequent within the cluster and
+  downweights words frequent across all mails. The top `keywords` words per cluster go to
+  the naming model.
 
 With fewer than three mails, or fewer than `min_cluster_size`, there is nothing to cluster;
-everything is noise and the run stops. For small mailboxes `n_neighbors` and `n_components`
-are lowered automatically so UMAP still works. All settings are in the `[clustering]` section
-of the config.
+everything is noise and the run stops. For small mailboxes the code caps `n_neighbors` at
+n − 1 and `n_components` at n − 2 (n = number of mails) and then starts UMAP from a random
+instead of a spectral layout. All settings are in the `[clustering]` section of the config.
 
 ## Configuration
 
