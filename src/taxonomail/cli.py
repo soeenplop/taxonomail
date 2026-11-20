@@ -10,6 +10,7 @@ from typing import Annotated
 
 import typer
 from dotenv import find_dotenv, load_dotenv
+from pydantic import ValidationError
 
 from taxonomail.clustering import (
     BERTopicClusterer,
@@ -17,7 +18,14 @@ from taxonomail.clustering import (
     Embedder,
     OpenAIEmbedder,
 )
-from taxonomail.config import ClusteringConfig, EmbeddingConfig, LLMConfig, load_settings
+from taxonomail.config import (
+    ClusteringConfig,
+    EmbeddingConfig,
+    LLMConfig,
+    Settings,
+    TaxonomyConfig,
+    load_settings,
+)
 from taxonomail.llm import LLM, OpenAILLM
 from taxonomail.mail import Mail, parse_mail
 from taxonomail.output import write_result
@@ -40,6 +48,18 @@ make_llm: Callable[[LLMConfig], LLM] = OpenAILLM
 @app.callback()
 def main() -> None:
     """Discover a folder taxonomy for a mailbox with BERTopic and an LLM."""
+
+
+def _with_language(settings: Settings, language: str) -> Settings:
+    try:
+        taxonomy = TaxonomyConfig.model_validate(
+            settings.taxonomy.model_dump() | {"language": language}
+        )
+    except ValidationError:
+        raise typer.BadParameter(
+            "--language must be a language name such as German", param_hint="--language"
+        ) from None
+    return settings.model_copy(update={"taxonomy": taxonomy})
 
 
 def _load(raw_mails: Iterable[bytes], limit: int | None) -> list[Mail]:
@@ -69,6 +89,13 @@ def run(
         Path | None, typer.Option(help="TOML settings file (models, clustering).", dir_okay=False)
     ] = None,
     limit: Annotated[int | None, typer.Option(min=1, help="Use at most this many mails.")] = None,
+    language: Annotated[
+        str | None,
+        typer.Option(
+            help="Language of the folder and cluster names, e.g. German. "
+            "Overrides [taxonomy] language in --config; the default is English."
+        ),
+    ] = None,
 ) -> None:
     """Read a mailbox, cluster it with BERTopic, and let an LLM turn the clusters into folders.
 
@@ -77,6 +104,8 @@ def run(
     """
     load_dotenv(find_dotenv(usecwd=True))
     settings = load_settings(config)
+    if language is not None:
+        settings = _with_language(settings, language)
     if (maildir is None) == (imap_host is None):
         raise typer.BadParameter("give either --maildir or --imap-host")
     if maildir is not None:

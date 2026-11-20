@@ -29,3 +29,4 @@ seed = 0                 # UMAP random state
 [taxonomy]
 min_folders = 8
 max_folders = 25
+language = "English"     # language of folder and cluster names, e.g. "German"

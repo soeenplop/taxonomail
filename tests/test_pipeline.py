@@ -3,7 +3,15 @@ import pytest
 from taxonomail.config import Settings, TaxonomyConfig
 from taxonomail.mail import Mail, parse_mail
 from taxonomail.pipeline import Result, build_taxonomy
-from tests.fakes import TOPICS, FakeClusterer, FakeEmbedder, FakeLLM, Plan, raw_mail
+from tests.fakes import (
+    TOPICS,
+    FakeClusterer,
+    FakeEmbedder,
+    FakeLLM,
+    Plan,
+    one_folder_per_cluster,
+    raw_mail,
+)
 
 
 def mails() -> list[Mail]:
@@ -75,3 +83,58 @@ def test_folder_emptied_by_repair_does_not_count() -> None:
     llm = FakeLLM([overlapping, overlapping])
     with pytest.raises(ValueError, match="1 folders"):
         run(llm, Settings(taxonomy=TaxonomyConfig(min_folders=2)))
+
+
+def test_language_goes_into_both_prompts() -> None:
+    llm = FakeLLM()
+    run(llm)
+    assert all("in English" in system and "German" not in system for system, _ in llm.calls)
+    llm = FakeLLM()
+    run(llm, Settings(taxonomy=TaxonomyConfig(language="German")))
+    assert len(llm.calls) == 4
+    assert all("in German" in system and "English" not in system for system, _ in llm.calls)
+
+
+def test_folder_ids_become_ascii_slugs() -> None:
+    def french(ids: list[int]) -> dict[str, object]:
+        folders = [
+            {"id": "Électricité & Gaz", "name": "Électricité", "description": "d", "clusters": [0]},
+            {"id": "voyages", "name": "Voyages", "description": "d", "clusters": [1, 2]},
+        ]
+        return {"folders": folders}
+
+    result = run(FakeLLM([french]), Settings(taxonomy=TaxonomyConfig(min_folders=2)))
+    assert [f.id for f in result.folders] == ["electricite-gaz", "voyages"]
+    assert result.folders[0].name == "Électricité"
+    assert {a.folder for a in result.assignments} == {"electricite-gaz", "voyages"}
+
+
+def test_folder_id_without_ascii_letters_is_asked_again() -> None:
+    def japanese(ids: list[int]) -> dict[str, object]:
+        return {"folders": [{"id": "旅行", "name": "旅行", "description": "d", "clusters": ids}]}
+
+    llm = FakeLLM([japanese, one_folder_per_cluster])
+    result = run(llm)
+    assert "folders: value_error" in llm.calls[-1][1][-1]["content"]
+    assert [f.id for f in result.folders] == ["invoices", "travel", "club"]
+
+
+def test_ids_that_collide_after_the_retry_get_a_suffix() -> None:
+    def colliding(ids: list[int]) -> dict[str, object]:
+        folders = [
+            {"id": "café", "name": "Café", "description": "d", "clusters": [0]},
+            {"id": "cafe", "name": "Cafe", "description": "d", "clusters": [1]},
+            {"id": "Café!", "name": "Café!", "description": "d", "clusters": [2]},
+        ]
+        return {"folders": folders}
+
+    llm = FakeLLM([colliding, colliding])
+    result = run(llm, Settings(taxonomy=TaxonomyConfig(min_folders=3)))
+    consolidations = [m for _, m in llm.calls if "exactly one folder" in m[0]["content"]]
+    assert "folders 1 and 2 use the same id" in consolidations[1][0]["content"]
+    assert [(f.id, f.name, f.size) for f in result.folders] == [
+        ("cafe", "Café", 5),
+        ("cafe-2", "Cafe", 4),
+        ("cafe-3", "Café!", 4),
+    ]
+    assert result.cluster_folders == {0: "cafe", 1: "cafe-2", 2: "cafe-3"}

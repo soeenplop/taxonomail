@@ -32,8 +32,9 @@ of each mail) and `clusters.json` (the clusters behind the folders).
    keywords and groups the clusters into between `min_folders` and `max_folders` folders;
    the minimum is capped at the number of clusters. A plan with mapping errors (a cluster
    missing, unknown or in two folders), duplicate folder ids or too many or too few folders
-   is sent back once with the problems listed. If the folder count is still out of range,
-   the run stops. A cluster the plan still leaves out goes, as a whole, to the folder whose
+   is sent back once with the problems listed. Folder ids still shared after that get a
+   numeric suffix (`cafe`, `cafe-2`). If the folder count is still out of range, the run
+   stops. A cluster the plan still leaves out goes, as a whole, to the folder whose
    mean vector is most similar (cosine) to the cluster's mean vector.
 5. **Assign.** Each clustered mail goes to its cluster's folder. Each noise mail goes to the
    folder whose mean vector is closest to it (`method: nearest` in `assignments.jsonl`).
@@ -75,6 +76,10 @@ sent to whichever endpoints you configure. Set models and endpoints in a TOML fi
 with `--config` (see [taxonomail.example.toml](taxonomail.example.toml)) and the key in
 `.env` (see [.env.example](.env.example)). `.env` is read from the working directory or a
 parent. IMAP always uses TLS.
+
+Folder and cluster names and descriptions are in English unless you set another language,
+either per run with `--language German` or as `language` under `[taxonomy]` in the config
+file. Folder ids stay lowercase ASCII slugs.
 
 Mail text (sender domain, subject, start of the body) is sent to the embedding service and,
 for a few mails per cluster, to the LLM. The LLM also gets each cluster's keywords and size,

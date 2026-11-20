@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from taxonomail import prompts
 from taxonomail.clustering import NOISE, Clusterer, Clusters, Embedder, nearest, representatives
@@ -29,6 +31,12 @@ class ClusterName(BaseModel):
     description: str = Field(min_length=1)
 
 
+def slug(text: str) -> str:
+    """Lowercase ASCII slug: accents dropped, other runs of non-alphanumerics become "-"."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+
+
 class FolderDraft(BaseModel):
     """One folder as the LLM proposes it."""
 
@@ -36,6 +44,14 @@ class FolderDraft(BaseModel):
     name: str = Field(min_length=1)
     description: str
     clusters: list[int]
+
+    @field_validator("id")
+    @classmethod
+    def _slug(cls, value: str) -> str:
+        """Folder ids are ASCII slugs whatever the language of the names."""
+        if not (cleaned := slug(value)):
+            raise ValueError("id must contain letters a-z or digits")
+        return cleaned
 
 
 class FolderPlan(BaseModel):
@@ -79,6 +95,7 @@ def name_clusters(
 ) -> dict[int, ClusterName]:
     """Ask the LLM for a name and description of every cluster."""
     reps = representatives(vectors, clusters.labels, settings.clustering.representatives)
+    system = prompts.NAMING_SYSTEM.format(language=settings.taxonomy.language)
 
     def name(cluster: int) -> ClusterName:
         shown = "\n\n".join(
@@ -95,7 +112,7 @@ def name_clusters(
             keywords=wrap_mail(", ".join(clusters.keywords.get(cluster, []))),
             mails=shown,
         )
-        return ask_json(llm, prompts.NAMING_SYSTEM, user, ClusterName)
+        return ask_json(llm, system, user, ClusterName)
 
     with ThreadPoolExecutor(max_workers=NAMING_WORKERS) as pool:
         names = list(pool.map(name, clusters.ids))
@@ -145,6 +162,19 @@ def _problems(plan: FolderPlan, cluster_ids: Sequence[int], settings: Settings) 
     return problems
 
 
+def _unique_ids(plan: FolderPlan) -> FolderPlan:
+    """Give folders that share an id a numeric suffix: "cafe", "cafe-2", ..."""
+    seen: set[str] = set()
+    folders = []
+    for folder in plan.folders:
+        unique, n = folder.id, 2
+        while unique in seen:
+            unique, n = f"{folder.id}-{n}", n + 1
+        seen.add(unique)
+        folders.append(folder.model_copy(update={"id": unique}))
+    return FolderPlan(folders=folders)
+
+
 def consolidate(
     clusters: Clusters, names: dict[int, ClusterName], llm: LLM, settings: Settings, log: Log
 ) -> FolderPlan:
@@ -167,6 +197,7 @@ def consolidate(
     system = prompts.CONSOLIDATION_SYSTEM.format(
         min_folders=_min_folders(settings, clusters.ids),
         max_folders=settings.taxonomy.max_folders,
+        language=settings.taxonomy.language,
     )
     user = prompts.CONSOLIDATION_USER.format(
         clustered=sum(1 for label in clusters.labels if label != NOISE),
@@ -180,7 +211,7 @@ def consolidate(
     if problems:
         log(f"folder plan has {len(problems)} problems, asking again")
         retry = f"{user}\n\nA previous answer had these problems:\n" + "\n".join(problems)
-        plan = ask_json(llm, system, retry, FolderPlan)
+        plan = _unique_ids(ask_json(llm, system, retry, FolderPlan))
         if (problem := _count_problem(plan, clusters.ids, settings)) is not None:
             raise ValueError(problem)
     return plan
