@@ -86,16 +86,25 @@ def test_folder_emptied_by_repair_does_not_count() -> None:
 
 
 def test_language_goes_into_both_prompts() -> None:
+    def systems(llm: FakeLLM) -> list[str]:
+        return [" ".join(system.split()) for system, _ in llm.calls]
+
     llm = FakeLLM()
     run(llm)
-    assert all("words in English" in system for system, _ in llm.calls)
-    assert all("Write English as people speak it every day" in system for system, _ in llm.calls)
-    assert not any("in German" in system for system, _ in llm.calls)
+    assert all("words in English" in s for s in systems(llm))
+    assert all("Write English as people speak it every day" in s for s in systems(llm))
+    assert not any("in German" in s for s in systems(llm))
     llm = FakeLLM()
     run(llm, Settings(taxonomy=TaxonomyConfig(language="German")))
     assert len(llm.calls) == 4
-    assert all("in German" in system and "English" not in system for system, _ in llm.calls)
-    assert all("Write German as people speak it every day" in system for system, _ in llm.calls)
+    assert all("in German" in s and "English" not in s for s in systems(llm))
+    assert all("Write German as people speak it every day" in s for s in systems(llm))
+    assert all("Use a loanword only where native speakers really say it" in s for s in systems(llm))
+    assert all('"Shopping" rather than "Einkauf", but "Rechnungen"' in s for s in systems(llm))
+    consolidation = [s for s in systems(llm) if "Fields of each folder" in s]
+    assert len(consolidation) == 1
+    assert "never one specific company, brand, product or service" in consolidation[0]
+    assert "even when one sender dominates" in consolidation[0]
 
 
 def test_folder_ids_become_ascii_slugs() -> None:

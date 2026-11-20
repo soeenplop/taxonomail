@@ -2,8 +2,9 @@
 
 EVERYDAY = """\
 Write {language} as people speak it every day, not as a dictionary or an office would: use
-the words a native speaker would put on a folder, including common loanwords (German
-speakers say "Shopping" rather than "Einkauf"), and avoid stiff or literal translations."""
+the words a native speaker would put on a folder and avoid stiff or literal translations.
+Use a loanword only where native speakers really say it, never just to sound casual: German
+speakers say "Shopping" rather than "Einkauf", but "Rechnungen", not "Bills"."""
 
 NAMING_SYSTEM = """\
 You name one cluster of emails from a single person's inbox. A topic model grouped the inbox
@@ -43,7 +44,8 @@ Rules:
 1. Between {min_folders} and {max_folders} folders.
 2. One axis: topic. A folder is defined by what its mails are about or the area of life they
    belong to (banking, a hobby, travel, work for one client), not by format (newsletter,
-   notification) or by sender alone.
+   notification) or by sender alone. A folder name names that topic, never one specific
+   company, brand, product or service, even when one sender dominates the folder.
 3. Similar breadth: don't give a tiny sender its own folder while half the inbox sits in
    another. Use the mail counts.
 4. No catch-all folder ("Other", "Misc"); put a cluster that fits nowhere well into the
