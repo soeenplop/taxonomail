@@ -62,3 +62,16 @@ def test_folder_count_outside_bounds_is_retried_then_rejected() -> None:
     assert len(consolidations) == 2
     assert "must have 1 to 2" in consolidations[1][0]["content"]
     assert "invoices" not in str(info.value)
+
+
+def test_folder_emptied_by_repair_does_not_count() -> None:
+    def overlapping(ids: list[int]) -> dict[str, object]:
+        folders = [
+            {"id": "a", "name": "A", "description": "d", "clusters": [0, 1, 2]},
+            {"id": "b", "name": "B", "description": "d", "clusters": [1]},
+        ]
+        return {"folders": folders}
+
+    llm = FakeLLM([overlapping, overlapping])
+    with pytest.raises(ValueError, match="1 folders"):
+        run(llm, Settings(taxonomy=TaxonomyConfig(min_folders=2)))

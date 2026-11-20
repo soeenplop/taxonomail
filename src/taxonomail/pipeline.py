@@ -102,15 +102,24 @@ def name_clusters(
     return dict(zip(clusters.ids, names, strict=True))
 
 
+def _min_folders(settings: Settings, cluster_ids: Sequence[int]) -> int:
+    return min(settings.taxonomy.min_folders, len(cluster_ids))
+
+
 def _folder_count(plan: FolderPlan, cluster_ids: Sequence[int]) -> int:
-    """Distinct folders that hold at least one known cluster."""
+    """Distinct folders left after ``_repair``: each known cluster goes to its first folder."""
     known = set(cluster_ids)
-    return len({f.id for f in plan.folders if known.intersection(f.clusters)})
+    owner: dict[int, str] = {}
+    for folder in plan.folders:
+        for cluster in folder.clusters:
+            if cluster in known:
+                owner.setdefault(cluster, folder.id)
+    return len(set(owner.values()))
 
 
 def _count_problem(plan: FolderPlan, cluster_ids: Sequence[int], settings: Settings) -> str | None:
     count = _folder_count(plan, cluster_ids)
-    low = min(settings.taxonomy.min_folders, len(cluster_ids))
+    low = _min_folders(settings, cluster_ids)
     high = settings.taxonomy.max_folders
     if low <= count <= high:
         return None
@@ -156,7 +165,8 @@ def consolidate(
         for cluster in clusters.ids
     ]
     system = prompts.CONSOLIDATION_SYSTEM.format(
-        min_folders=settings.taxonomy.min_folders, max_folders=settings.taxonomy.max_folders
+        min_folders=_min_folders(settings, clusters.ids),
+        max_folders=settings.taxonomy.max_folders,
     )
     user = prompts.CONSOLIDATION_USER.format(
         clustered=sum(1 for label in clusters.labels if label != NOISE),
