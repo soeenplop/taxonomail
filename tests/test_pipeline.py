@@ -88,11 +88,13 @@ def test_folder_emptied_by_repair_does_not_count() -> None:
 def test_language_goes_into_both_prompts() -> None:
     llm = FakeLLM()
     run(llm)
-    assert all("in English" in system and "German" not in system for system, _ in llm.calls)
+    assert all("words in English" in system for system, _ in llm.calls)
+    assert not any("in German" in system for system, _ in llm.calls)
     llm = FakeLLM()
     run(llm, Settings(taxonomy=TaxonomyConfig(language="German")))
     assert len(llm.calls) == 4
     assert all("in German" in system and "English" not in system for system, _ in llm.calls)
+    assert all("Write German as people speak it every day" in system for system, _ in llm.calls)
 
 
 def test_folder_ids_become_ascii_slugs() -> None:
