@@ -88,10 +88,23 @@ def _strip_fences(text: str) -> str:
     return match.group(1) if match else text
 
 
-def _endpoint(config: LLMConfig, official: str) -> tuple[str, bool]:
+def _endpoint(config: Any, official: str) -> tuple[str, bool]:
     """The URL the SDK will use and whether it is the official one."""
     url = config.base_url or official
     return url, url.rstrip("/") == official.rstrip("/")
+
+
+def openai_credentials(config: Any, env: Mapping[str, str]) -> tuple[str, str]:
+    """API key and base URL for an OpenAI-compatible client (``base_url``, ``api_key_env``).
+
+    A custom endpoint never gets OPENAI_API_KEY; keyless servers get a placeholder.
+    """
+    url, official = _endpoint(config, OPENAI_URL)
+    name = config.api_key_env or ("OPENAI_API_KEY" if official else None)
+    api_key = env.get(name) if name else "unused"
+    if not api_key:
+        raise LLMError(f"environment variable {name} is not set")
+    return api_key, url
 
 
 class AnthropicLLM:
@@ -141,12 +154,8 @@ class OpenAILLM:
         env: Mapping[str, str] | None = None,
     ) -> None:
         env = os.environ if env is None else env
-        # A custom endpoint never gets OPENAI_API_KEY; keyless servers get a placeholder.
-        url, official = _endpoint(config, OPENAI_URL)
-        name = config.api_key_env or ("OPENAI_API_KEY" if official else None)
-        api_key = env.get(name) if name else "unused"
-        if not api_key:
-            raise LLMError(f"environment variable {name} is not set")
+        api_key, url = openai_credentials(config, env)
+        official = _endpoint(config, OPENAI_URL)[1]
         if client_factory is None:
             import openai
 

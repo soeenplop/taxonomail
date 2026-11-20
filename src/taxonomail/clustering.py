@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from collections.abc import Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
 
@@ -11,9 +11,13 @@ import numpy as np
 import numpy.typing as npt
 
 from taxonomail.config import ClusteringConfig, EmbeddingConfig
+from taxonomail.llm import openai_credentials
 
 Vectors = npt.NDArray[np.float32]
 NOISE = -1
+MAX_TEXT_CHARS = 8000
+MAX_BATCH_CHARS = 100_000
+EMPTY = "(empty)"
 
 
 class Embedder(Protocol):
@@ -27,20 +31,32 @@ class Embedder(Protocol):
 class OpenAIEmbedder:
     """Embeddings from OpenAI or any OpenAI-compatible server (Ollama, vLLM, TEI, ...)."""
 
-    def __init__(self, config: EmbeddingConfig, client: Any = None) -> None:
-        import openai
-
+    def __init__(
+        self,
+        config: EmbeddingConfig,
+        client: Any = None,
+        client_factory: Callable[..., Any] | None = None,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
         self._config = config
-        self._client: Any = client or openai.OpenAI(
-            api_key=os.environ.get(config.api_key_env) or "unused", base_url=config.base_url
-        )
+        if client is None:
+            api_key, url = openai_credentials(config, os.environ if env is None else env)
+            if client_factory is None:
+                import openai
+
+                client_factory = openai.OpenAI
+            # base_url is explicit, so OPENAI_BASE_URL in the environment is ignored.
+            client = client_factory(api_key=api_key, base_url=url)
+        self._client: Any = client
 
     def embed(self, texts: Sequence[str]) -> Vectors:
-        """Embed ``texts`` in batches; rows are L2-normalized."""
+        """Embed ``texts`` in batches; rows are L2-normalized and in input order."""
+        if not texts:
+            return np.zeros((0, 0), dtype=np.float32)
+        # Bounded, never blank, so every text yields exactly one row.
+        clean = [text[:MAX_TEXT_CHARS].strip() or EMPTY for text in texts]
         rows: list[list[float]] = []
-        size = self._config.batch_size
-        for start in range(0, len(texts), size):
-            batch = list(texts[start : start + size])
+        for batch in self._batches(clean):
             response = self._client.embeddings.create(model=self._config.model, input=batch)
             data = sorted(response.data, key=lambda item: item.index)
             if len(data) != len(batch):
@@ -49,6 +65,20 @@ class OpenAIEmbedder:
         vectors = np.asarray(rows, dtype=np.float32)
         norms = np.linalg.norm(vectors, axis=1, keepdims=True)
         return (vectors / np.where(norms == 0, 1, norms)).astype(np.float32)
+
+    def _batches(self, texts: list[str]) -> list[list[str]]:
+        """Batches of at most ``batch_size`` texts and ``MAX_BATCH_CHARS`` characters."""
+        batches: list[list[str]] = [[]]
+        chars = 0
+        for text in texts:
+            if batches[-1] and (
+                len(batches[-1]) >= self._config.batch_size or chars + len(text) > MAX_BATCH_CHARS
+            ):
+                batches.append([])
+                chars = 0
+            batches[-1].append(text)
+            chars += len(text)
+        return batches
 
 
 @dataclass(frozen=True)
@@ -87,12 +117,20 @@ class BERTopicClusterer:
         from umap import UMAP
 
         c = self._config
+        n = len(docs)
+        if n < c.min_cluster_size:
+            return Clusters(labels=[NOISE] * n, keywords={})
+        # UMAP's spectral init needs more points than neighbors and components.
+        n_neighbors = min(c.n_neighbors, n - 1)
+        n_components = max(1, min(c.n_components, n - 2))
+        bounded = (n_neighbors, n_components) != (c.n_neighbors, c.n_components)
         model = BERTopic(
             umap_model=UMAP(
-                n_neighbors=c.n_neighbors,
-                n_components=c.n_components,
+                n_neighbors=n_neighbors,
+                n_components=n_components,
                 min_dist=0.0,
                 metric="cosine",
+                init="random" if bounded else "spectral",
                 random_state=c.seed,
             ),
             hdbscan_model=HDBSCAN(min_cluster_size=c.min_cluster_size, prediction_data=True),
