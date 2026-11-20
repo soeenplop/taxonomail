@@ -56,11 +56,16 @@ class ClusteringConfig(_Section):
     seed: int = 0
 
 
+LANGUAGE_PATTERN = r"^[^\W\d_]+(?:[ -][^\W\d_]+)*$"
+
+
 class TaxonomyConfig(_Section):
-    """How many folders the LLM should make."""
+    """How many folders the LLM should make, and the language of their names."""
 
     min_folders: int = 8
     max_folders: int = 25
+    language: str = Field(default="English", max_length=40, pattern=LANGUAGE_PATTERN)
+    """Language of folder and cluster names and descriptions, e.g. "German"."""
 
     @model_validator(mode="after")
     def _check_range(self) -> TaxonomyConfig:

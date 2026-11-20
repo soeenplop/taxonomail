@@ -76,6 +76,10 @@ with `--config` (see [taxonomail.example.toml](taxonomail.example.toml)) and the
 `.env` (see [.env.example](.env.example)). `.env` is read from the working directory or a
 parent. IMAP always uses TLS.
 
+Folder and cluster names and descriptions are in English unless you set another language,
+either per run with `--language German` or as `language` under `[taxonomy]` in the config
+file. Folder ids stay lowercase ASCII slugs.
+
 Mail text (sender domain, subject, start of the body) is sent to the embedding service and,
 for a few mails per cluster, to the LLM. The LLM also gets each cluster's keywords and size,
 and the generated cluster names and descriptions. The output contains senders and subjects:

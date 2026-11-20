@@ -75,3 +75,13 @@ def test_folder_emptied_by_repair_does_not_count() -> None:
     llm = FakeLLM([overlapping, overlapping])
     with pytest.raises(ValueError, match="1 folders"):
         run(llm, Settings(taxonomy=TaxonomyConfig(min_folders=2)))
+
+
+def test_language_goes_into_both_prompts() -> None:
+    llm = FakeLLM()
+    run(llm)
+    assert all("in English" in system and "German" not in system for system, _ in llm.calls)
+    llm = FakeLLM()
+    run(llm, Settings(taxonomy=TaxonomyConfig(language="German")))
+    assert len(llm.calls) == 4
+    assert all("in German" in system and "English" not in system for system, _ in llm.calls)

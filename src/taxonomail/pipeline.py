@@ -79,6 +79,7 @@ def name_clusters(
 ) -> dict[int, ClusterName]:
     """Ask the LLM for a name and description of every cluster."""
     reps = representatives(vectors, clusters.labels, settings.clustering.representatives)
+    system = prompts.NAMING_SYSTEM.format(language=settings.taxonomy.language)
 
     def name(cluster: int) -> ClusterName:
         shown = "\n\n".join(
@@ -95,7 +96,7 @@ def name_clusters(
             keywords=wrap_mail(", ".join(clusters.keywords.get(cluster, []))),
             mails=shown,
         )
-        return ask_json(llm, prompts.NAMING_SYSTEM, user, ClusterName)
+        return ask_json(llm, system, user, ClusterName)
 
     with ThreadPoolExecutor(max_workers=NAMING_WORKERS) as pool:
         names = list(pool.map(name, clusters.ids))
@@ -167,6 +168,7 @@ def consolidate(
     system = prompts.CONSOLIDATION_SYSTEM.format(
         min_folders=_min_folders(settings, clusters.ids),
         max_folders=settings.taxonomy.max_folders,
+        language=settings.taxonomy.language,
     )
     user = prompts.CONSOLIDATION_USER.format(
         clustered=sum(1 for label in clusters.labels if label != NOISE),
