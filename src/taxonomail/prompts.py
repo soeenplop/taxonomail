@@ -3,7 +3,7 @@
 EVERYDAY = """\
 Write {language} as people speak it every day, not as a dictionary or an office would: use
 the words a native speaker would put on a folder, including common loanwords (German
-"Shopping" rather than "Einkauf"), and avoid stiff or literal translations."""
+speakers say "Shopping" rather than "Einkauf"), and avoid stiff or literal translations."""
 
 NAMING_SYSTEM = """\
 You name one cluster of emails from a single person's inbox. A topic model grouped the inbox

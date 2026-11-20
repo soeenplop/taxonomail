@@ -89,6 +89,7 @@ def test_language_goes_into_both_prompts() -> None:
     llm = FakeLLM()
     run(llm)
     assert all("words in English" in system for system, _ in llm.calls)
+    assert all("Write English as people speak it every day" in system for system, _ in llm.calls)
     assert not any("in German" in system for system, _ in llm.calls)
     llm = FakeLLM()
     run(llm, Settings(taxonomy=TaxonomyConfig(language="German")))
