@@ -70,9 +70,7 @@ instead of a spectral layout. All settings are in the `[clustering]` section of 
 ## Configuration
 
 Every step (embedding, naming, consolidation) uses `OPENAI_API_KEY` with its own `base_url`,
-so any OpenAI-compatible endpoint works: OpenAI, Anthropic's OpenAI-compatible API
-(`https://api.anthropic.com/v1/`) for naming and consolidation, Ollama, Scaleway, and so on.
-Anthropic has no embeddings endpoint, so keep embeddings on another provider. The key is
+so any OpenAI-compatible endpoint works: OpenAI, Ollama, Scaleway, and so on. The key is
 sent to whichever endpoints you configure. Set models and endpoints in a TOML file passed
 with `--config` (see [taxonomail.example.toml](taxonomail.example.toml)) and the key in
 `.env` (see [.env.example](.env.example)). `.env` is read from the working directory or a
