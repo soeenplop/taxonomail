@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field
 from taxonomail import prompts
 from taxonomail.clustering import NOISE, Clusterer, Clusters, Embedder, nearest, representatives
 from taxonomail.config import Settings
-from taxonomail.llm import LLM, ask_json
+from taxonomail.llm import LLM, ask_json, wrap_mail
 from taxonomail.mail import Mail
 
 EXCERPT_CHARS = 500
@@ -82,14 +82,17 @@ def name_clusters(
 
     def name(cluster: int) -> ClusterName:
         shown = "\n\n".join(
-            f"- From: {mails[i].sender_domain}\n  Subject: {mails[i].subject}\n"
-            f"  Body: {mails[i].body[:EXCERPT_CHARS]}"
+            "- "
+            + wrap_mail(
+                f"From: {mails[i].sender_domain}\nSubject: {mails[i].subject}\n"
+                f"Body: {mails[i].body[:EXCERPT_CHARS]}"
+            )
             for i in reps[cluster]
         )
         user = prompts.NAMING_USER.format(
             cluster_id=cluster,
             size=clusters.labels.count(cluster),
-            keywords=", ".join(clusters.keywords.get(cluster, [])),
+            keywords=wrap_mail(", ".join(clusters.keywords.get(cluster, []))),
             mails=shown,
         )
         return ask_json(llm, prompts.NAMING_SYSTEM, user, ClusterName)
@@ -99,7 +102,22 @@ def name_clusters(
     return dict(zip(clusters.ids, names, strict=True))
 
 
-def _problems(plan: FolderPlan, cluster_ids: Sequence[int]) -> list[str]:
+def _folder_count(plan: FolderPlan, cluster_ids: Sequence[int]) -> int:
+    """Distinct folders that hold at least one known cluster."""
+    known = set(cluster_ids)
+    return len({f.id for f in plan.folders if known.intersection(f.clusters)})
+
+
+def _count_problem(plan: FolderPlan, cluster_ids: Sequence[int], settings: Settings) -> str | None:
+    count = _folder_count(plan, cluster_ids)
+    low = min(settings.taxonomy.min_folders, len(cluster_ids))
+    high = settings.taxonomy.max_folders
+    if low <= count <= high:
+        return None
+    return f"the plan has {count} folders with clusters, but it must have {low} to {high}"
+
+
+def _problems(plan: FolderPlan, cluster_ids: Sequence[int], settings: Settings) -> list[str]:
     seen: dict[int, int] = {}
     for folder in plan.folders:
         for cluster in folder.clusters:
@@ -107,8 +125,14 @@ def _problems(plan: FolderPlan, cluster_ids: Sequence[int]) -> list[str]:
     problems = [f"cluster {c} is in no folder" for c in cluster_ids if c not in seen]
     problems += [f"cluster {c} is in {n} folders" for c, n in seen.items() if n > 1]
     problems += [f"cluster {c} does not exist" for c in seen if c not in set(cluster_ids)]
-    ids = [f.id for f in plan.folders]
-    problems += [f"folder id {i} is used twice" for i in sorted(set(ids)) if ids.count(i) > 1]
+    # Positions, not ids: ids are model-generated text.
+    first: dict[str, int] = {}
+    for position, folder in enumerate(plan.folders, 1):
+        if folder.id in first:
+            problems.append(f"folders {first[folder.id]} and {position} use the same id")
+        first.setdefault(folder.id, position)
+    if (problem := _count_problem(plan, cluster_ids, settings)) is not None:
+        problems.append(problem)
     return problems
 
 
@@ -117,15 +141,17 @@ def consolidate(
 ) -> FolderPlan:
     """Ask the LLM to merge the clusters into folders; one retry if the mapping is off."""
     rows = [
-        json.dumps(
-            {
-                "id": cluster,
-                "mails": clusters.labels.count(cluster),
-                "name": names[cluster].name,
-                "description": names[cluster].description,
-                "keywords": clusters.keywords.get(cluster, [])[:6],
-            },
-            ensure_ascii=False,
+        wrap_mail(
+            json.dumps(
+                {
+                    "id": cluster,
+                    "mails": clusters.labels.count(cluster),
+                    "name": names[cluster].name,
+                    "description": names[cluster].description,
+                    "keywords": clusters.keywords.get(cluster, [])[:6],
+                },
+                ensure_ascii=False,
+            )
         )
         for cluster in clusters.ids
     ]
@@ -140,11 +166,13 @@ def consolidate(
         cluster_ids=", ".join(str(c) for c in clusters.ids),
     )
     plan = ask_json(llm, system, user, FolderPlan)
-    problems = _problems(plan, clusters.ids)
+    problems = _problems(plan, clusters.ids, settings)
     if problems:
         log(f"folder plan has {len(problems)} problems, asking again")
         retry = f"{user}\n\nA previous answer had these problems:\n" + "\n".join(problems)
         plan = ask_json(llm, system, retry, FolderPlan)
+        if (problem := _count_problem(plan, clusters.ids, settings)) is not None:
+            raise ValueError(problem)
     return plan
 
 

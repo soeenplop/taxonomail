@@ -79,7 +79,7 @@ class FakeLLM:
         self.calls.append((system, messages))
         user = messages[0]["content"]
         if "Representative mails" in user:
-            topic = re.search(r"Keywords: (\w+)", user)
+            topic = re.search(r"Keywords: <mail>\"(\w+)", user)
             word = topic.group(1) if topic else "unknown"
             return json.dumps({"name": f"{word} mails", "description": f"Mails about {word}."})
         listed = re.search(r"exactly one folder: ([\d, ]+)", user)

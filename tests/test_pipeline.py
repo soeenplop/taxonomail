@@ -1,4 +1,6 @@
-from taxonomail.config import Settings
+import pytest
+
+from taxonomail.config import Settings, TaxonomyConfig
 from taxonomail.mail import Mail, parse_mail
 from taxonomail.pipeline import Result, build_taxonomy
 from tests.fakes import TOPICS, FakeClusterer, FakeEmbedder, FakeLLM, Plan, raw_mail
@@ -9,14 +11,14 @@ def mails() -> list[Mail]:
     return [parse_mail(raw_mail(s, n=i)) for i, s in enumerate(subjects)]
 
 
-def run(llm: FakeLLM) -> Result:
+def run(llm: FakeLLM, settings: Settings | None = None) -> Result:
     return build_taxonomy(
         mails(),
         embedder=FakeEmbedder(),
         clusterer=FakeClusterer(),
         naming=llm,
         consolidation=llm,
-        settings=Settings(),
+        settings=settings or Settings(),
         log=lambda _: None,
     )
 
@@ -42,7 +44,7 @@ def test_bad_plan_is_retried_then_repaired() -> None:
 
     plans: list[Plan] = [merged_without_club, merged_without_club]
     llm = FakeLLM(plans)
-    result = run(llm)
+    result = run(llm, Settings(taxonomy=TaxonomyConfig(min_folders=1)))
     consolidations = [m for _, m in llm.calls if "exactly one folder" in m[0]["content"]]
     assert len(consolidations) == 2
     assert "cluster 2 is in no folder" in consolidations[1][0]["content"]
@@ -50,3 +52,13 @@ def test_bad_plan_is_retried_then_repaired() -> None:
     # The cluster left out goes to the only folder there is.
     assert result.cluster_folders == {0: "money-travel", 1: "money-travel", 2: "money-travel"}
     assert [(f.id, f.size) for f in result.folders] == [("money-travel", 13)]
+
+
+def test_folder_count_outside_bounds_is_retried_then_rejected() -> None:
+    llm = FakeLLM()
+    with pytest.raises(ValueError, match="3 folders") as info:
+        run(llm, Settings(taxonomy=TaxonomyConfig(min_folders=1, max_folders=2)))
+    consolidations = [m for _, m in llm.calls if "exactly one folder" in m[0]["content"]]
+    assert len(consolidations) == 2
+    assert "must have 1 to 2" in consolidations[1][0]["content"]
+    assert "invoices" not in str(info.value)
