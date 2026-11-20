@@ -96,6 +96,8 @@ def test_language_goes_into_both_prompts() -> None:
     assert len(llm.calls) == 4
     assert all("in German" in system and "English" not in system for system, _ in llm.calls)
     assert all("Write German as people speak it every day" in system for system, _ in llm.calls)
+    consolidation = [system for system, m in llm.calls if "exactly one folder" in m[0]["content"]]
+    assert "never a company, brand" in consolidation[0]
 
 
 def test_folder_ids_become_ascii_slugs() -> None:
