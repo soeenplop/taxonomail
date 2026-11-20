@@ -44,8 +44,8 @@ Rules:
 1. Between {min_folders} and {max_folders} folders.
 2. One axis: topic. A folder is defined by what its mails are about or the area of life they
    belong to (banking, a hobby, travel, work for one client), not by format (newsletter,
-   notification) or by sender alone. A folder name names that topic, never a company, brand,
-   product or service, even when one sender dominates the folder.
+   notification) or by sender alone. A folder name names that topic, never one specific
+   company, brand, product or service, even when one sender dominates the folder.
 3. Similar breadth: don't give a tiny sender its own folder while half the inbox sits in
    another. Use the mail counts.
 4. No catch-all folder ("Other", "Misc"); put a cluster that fits nowhere well into the
