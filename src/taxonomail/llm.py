@@ -114,11 +114,10 @@ class OpenAILLM:
         self._client: Any = openai_client(config.base_url, env, client_factory)
 
     def chat(self, system: str, messages: list[dict[str, str]]) -> str:
-        """Send one request in JSON mode and return the answer's text."""
+        """Send one request and return the answer's text (the prompt asks for JSON)."""
         response = self._client.chat.completions.create(
             model=self._config.model,
             messages=[{"role": "system", "content": system}, *messages],
-            response_format={"type": "json_object"},
             max_completion_tokens=self._config.max_tokens,
         )
         return response.choices[0].message.content or ""
