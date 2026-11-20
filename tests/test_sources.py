@@ -1,5 +1,6 @@
 import imaplib
 import ssl
+import traceback
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -39,7 +40,7 @@ class FakeImap:
         self.calls.append(("logout",))
 
     def login(self, user: str, password: str) -> None:
-        assert password == "pw"
+        user.encode("ascii"), password.encode("ascii")  # like imaplib
         self.calls.append(("login", user))
 
     def select(self, folder: str, readonly: bool) -> tuple[str, list[bytes]]:
@@ -56,11 +57,13 @@ class FakeImap:
         ]
 
 
-def settings_for(folder: str, monkeypatch: pytest.MonkeyPatch) -> ImapSettings:
+def settings_for(
+    folder: str, monkeypatch: pytest.MonkeyPatch, user: str = "me", password: str = "pw"
+) -> ImapSettings:
     FakeImap.instances.clear()
     monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeImap)
-    monkeypatch.setenv("IMAP_PASSWORD", "pw")
-    return ImapSettings(host="imap.example.org", user="me", folder=folder)
+    monkeypatch.setenv("IMAP_PASSWORD", password)
+    return ImapSettings(host="imap.example.org", user=user, folder=folder)
 
 
 def test_imap_reads_read_only_in_batches(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -84,8 +87,31 @@ def test_imap_folder_is_utf7_encoded(
     assert ("select", wire, True) in FakeImap.instances[0].calls
 
 
-@pytest.mark.parametrize("folder", ["a\r\nb", "a\nb", "a\0b"])
-def test_imap_rejects_injecting_folder_names(folder: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    with pytest.raises(ValueError, match="invalid IMAP folder name"):
-        list(read_imap(settings_for(folder, monkeypatch)))
-    assert not FakeImap.instances
+@pytest.mark.parametrize(
+    ("folder", "user", "password", "message", "connects"),
+    [
+        ("a\r\nb", "me", "pw", "invalid IMAP folder name", False),
+        ("a\nb", "me", "pw", "invalid IMAP folder name", False),
+        ("a\0b", "me", "pw", "invalid IMAP folder name", False),
+        ("INBOX", "me\r\nX LOGOUT", "pw", "invalid IMAP credentials", False),
+        ("INBOX", "me", "p\r\nX LOGOUT", "invalid IMAP credentials", False),
+        ("INBOX", "me", "pä\u00dfw", "credentials must be ASCII", True),
+    ],
+)
+def test_imap_rejects_bad_input_without_leaking(
+    folder: str,
+    user: str,
+    password: str,
+    message: str,
+    connects: bool,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = settings_for(folder, monkeypatch, user, password)
+    with pytest.raises((ValueError, RuntimeError), match=message) as info:
+        list(read_imap(settings))
+    shown = str(info.value) + "".join(traceback.format_exception(info.value))
+    assert password not in shown and "pä" not in shown
+    assert bool(FakeImap.instances) == connects
+    assert all(
+        call[0] != "login" and call[0] != "select" for i in FakeImap.instances for call in i.calls
+    )

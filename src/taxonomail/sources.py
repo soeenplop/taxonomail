@@ -46,13 +46,18 @@ def read_imap(settings: ImapSettings, batch: int = 100) -> Iterator[bytes]:
     folder = _quote(settings.folder)  # validate before connecting
     if settings.password_env not in os.environ:
         raise RuntimeError(f"environment variable {settings.password_env} is not set")
+    password = os.environ[settings.password_env]
+    if any(char in value for value in (settings.user, password) for char in "\r\n\0"):
+        raise ValueError("invalid IMAP credentials")
     context = ssl.create_default_context()
     with imaplib.IMAP4_SSL(settings.host, settings.port, ssl_context=context) as imap:
         imap.debug = 0
         try:
-            imap.login(settings.user, os.environ[settings.password_env])
+            imap.login(settings.user, password)
         except imaplib.IMAP4.error:
             raise RuntimeError("IMAP login failed") from None
+        except UnicodeEncodeError:
+            raise RuntimeError("IMAP login failed (credentials must be ASCII)") from None
         status, _ = imap.select(folder, readonly=True)
         if status != "OK":
             raise RuntimeError("can't open IMAP folder")
