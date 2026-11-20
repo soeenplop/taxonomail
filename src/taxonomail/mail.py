@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import email
+import email.parser
 import email.policy
 import hashlib
 import re
 from dataclasses import dataclass
-from email.message import EmailMessage
+from email.header import decode_header, make_header
+from email.message import EmailMessage, Message
 from email.utils import parseaddr
 from html.parser import HTMLParser
 
@@ -114,11 +116,14 @@ def _extract_body(message: EmailMessage) -> str:
     return _squash(content)
 
 
-def _header(message: EmailMessage, name: str) -> str:
+def _header(message: Message, name: str) -> str:
     """A header as text; empty when the header parser fails (e.g. pathological nesting)."""
     try:
-        return str(message.get(name, ""))
-    except (RecursionError, ValueError, TypeError, IndexError):
+        value = message.get(name, "")
+        if isinstance(message.policy, email.policy.Compat32):
+            value = str(make_header(decode_header(str(value))))
+        return str(value)
+    except Exception:
         return ""
 
 
@@ -129,10 +134,7 @@ def _address(value: str) -> str:
         return ""
 
 
-def parse_mail(raw: bytes) -> Mail:
-    """Parse one raw message. Never raises on malformed mail; missing fields stay empty."""
-    message = email.message_from_bytes(raw, policy=email.policy.default)
-    assert isinstance(message, EmailMessage)
+def _fields(raw: bytes, message: Message, body: str) -> Mail:
     sender = _address(_header(message, "From"))
     message_id = _header(message, "Message-ID").strip()
     return Mail(
@@ -140,5 +142,28 @@ def parse_mail(raw: bytes) -> Mail:
         sender=sender,
         sender_domain=sender.rpartition("@")[2],
         subject=_squash(_header(message, "Subject")),
-        body=_body(message)[:BODY_CHARS],
+        body=body[:BODY_CHARS],
     )
+
+
+def parse_mail(raw: bytes) -> Mail:
+    """Parse one raw message. Never raises on malformed mail; missing fields stay empty."""
+    try:
+        message = email.message_from_bytes(raw, policy=email.policy.default)
+        assert isinstance(message, EmailMessage)
+        return _fields(raw, message, _body(message))
+    except Exception:  # one bad mail must never abort a run
+        pass
+    try:
+        head = re.split(rb"\r?\n\r?\n", raw, maxsplit=1)[0]
+        # compat32 parses headers lazily, so one broken header cannot fail the others.
+        legacy = email.parser.BytesHeaderParser().parsebytes(head)
+        return _fields(raw, legacy, "")
+    except Exception:
+        return Mail(
+            id=hashlib.sha256(raw.replace(b"\r\n", b"\n")).hexdigest()[:16],
+            sender="",
+            sender_domain="",
+            subject="",
+            body="",
+        )

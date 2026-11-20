@@ -1,5 +1,7 @@
 from email.message import EmailMessage
 
+import pytest
+
 from taxonomail.mail import parse_mail
 from tests.fakes import raw_mail
 
@@ -27,10 +29,16 @@ def test_attachment_text_is_not_the_body() -> None:
     assert parse_mail(raw).body == "café body"
 
 
-def test_pathological_from_keeps_subject_and_body() -> None:
-    raw = b"From: " + b"(" * 1200 + b"\nSubject: Hi\n\nBody"
+@pytest.mark.parametrize(
+    ("raw", "body"),
+    [
+        (b"From: " + b"(" * 1200 + b"\nSubject: Hi\n\nBody", "Body"),
+        (b"Subject: Hi\nContent-Type: text/plain; x=" + b"(" * 1200 + b"\n\nBody", ""),
+    ],
+)
+def test_pathological_headers_keep_subject(raw: bytes, body: str) -> None:
     mail = parse_mail(raw)
-    assert (mail.sender, mail.subject, mail.body) == ("", "Hi", "Body")
+    assert (mail.sender, mail.subject, mail.body) == ("", "Hi", body)
 
 
 def test_lf_and_crlf_give_the_same_mail() -> None:
