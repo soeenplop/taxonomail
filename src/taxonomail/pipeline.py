@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from collections.abc import Callable, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 
 import numpy as np
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from taxonomail import prompts
 from taxonomail.clustering import NOISE, Clusterer, Clusters, Embedder, nearest, representatives
@@ -29,6 +31,12 @@ class ClusterName(BaseModel):
     description: str = Field(min_length=1)
 
 
+def slug(text: str) -> str:
+    """Lowercase ASCII slug: accents dropped, other runs of non-alphanumerics become "-"."""
+    ascii_text = unicodedata.normalize("NFKD", text).encode("ascii", "ignore").decode()
+    return re.sub(r"[^a-z0-9]+", "-", ascii_text.lower()).strip("-")
+
+
 class FolderDraft(BaseModel):
     """One folder as the LLM proposes it."""
 
@@ -36,6 +44,14 @@ class FolderDraft(BaseModel):
     name: str = Field(min_length=1)
     description: str
     clusters: list[int]
+
+    @field_validator("id")
+    @classmethod
+    def _slug(cls, value: str) -> str:
+        """Folder ids are ASCII slugs whatever the language of the names."""
+        if not (cleaned := slug(value)):
+            raise ValueError("id must contain letters a-z or digits")
+        return cleaned
 
 
 class FolderPlan(BaseModel):

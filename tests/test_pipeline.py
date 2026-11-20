@@ -3,7 +3,15 @@ import pytest
 from taxonomail.config import Settings, TaxonomyConfig
 from taxonomail.mail import Mail, parse_mail
 from taxonomail.pipeline import Result, build_taxonomy
-from tests.fakes import TOPICS, FakeClusterer, FakeEmbedder, FakeLLM, Plan, raw_mail
+from tests.fakes import (
+    TOPICS,
+    FakeClusterer,
+    FakeEmbedder,
+    FakeLLM,
+    Plan,
+    one_folder_per_cluster,
+    raw_mail,
+)
 
 
 def mails() -> list[Mail]:
@@ -85,3 +93,27 @@ def test_language_goes_into_both_prompts() -> None:
     run(llm, Settings(taxonomy=TaxonomyConfig(language="German")))
     assert len(llm.calls) == 4
     assert all("in German" in system and "English" not in system for system, _ in llm.calls)
+
+
+def test_folder_ids_become_ascii_slugs() -> None:
+    def french(ids: list[int]) -> dict[str, object]:
+        folders = [
+            {"id": "Électricité & Gaz", "name": "Électricité", "description": "d", "clusters": [0]},
+            {"id": "voyages", "name": "Voyages", "description": "d", "clusters": [1, 2]},
+        ]
+        return {"folders": folders}
+
+    result = run(FakeLLM([french]), Settings(taxonomy=TaxonomyConfig(min_folders=2)))
+    assert [f.id for f in result.folders] == ["electricite-gaz", "voyages"]
+    assert result.folders[0].name == "Électricité"
+    assert {a.folder for a in result.assignments} == {"electricite-gaz", "voyages"}
+
+
+def test_folder_id_without_ascii_letters_is_asked_again() -> None:
+    def japanese(ids: list[int]) -> dict[str, object]:
+        return {"folders": [{"id": "旅行", "name": "旅行", "description": "d", "clusters": ids}]}
+
+    llm = FakeLLM([japanese, one_folder_per_cluster])
+    result = run(llm)
+    assert "folders: value_error" in llm.calls[-1][1][-1]["content"]
+    assert [f.id for f in result.folders] == ["invoices", "travel", "club"]

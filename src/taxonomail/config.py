@@ -56,7 +56,8 @@ class ClusteringConfig(_Section):
     seed: int = 0
 
 
-LANGUAGE_PATTERN = r"^[^\W\d_]+(?:[ -][^\W\d_]+)*$"
+# Words of letters, joined by single spaces, hyphens or apostrophes (' and U+2019).
+LANGUAGE_PATTERN = "^[^\\W\\d_]+(?:['\u2019 -][^\\W\\d_]+)*$"
 
 
 class TaxonomyConfig(_Section):

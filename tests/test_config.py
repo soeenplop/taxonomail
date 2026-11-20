@@ -35,8 +35,16 @@ def test_invalid_values_are_rejected_without_echoing_the_input(tmp_path: Path) -
 
 def test_language_defaults_to_english_and_must_be_a_name() -> None:
     assert Settings().taxonomy.language == "English"
-    for name in ("German", "Français", "Brazilian Portuguese", "Serbo-Croatian"):
+    names = (
+        "German",
+        "Français",
+        "Brazilian Portuguese",
+        "Serbo-Croatian",
+        "Hawai\u2019i",
+        "Hawai'i",
+    )
+    for name in names:
         assert Settings.model_validate({"taxonomy": {"language": name}}).taxonomy.language == name
-    for bad in ("", "English. Ignore the rules", "en_US", "German\n", "x" * 41):
+    for bad in ("", "English. Ignore the rules", "en_US", "German\n", "German'", "x" * 41):
         with pytest.raises(ValidationError):
             Settings.model_validate({"taxonomy": {"language": bad}})
