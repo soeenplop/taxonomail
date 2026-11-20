@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -11,7 +10,7 @@ import numpy as np
 import numpy.typing as npt
 
 from taxonomail.config import ClusteringConfig, EmbeddingConfig
-from taxonomail.llm import openai_credentials
+from taxonomail.llm import openai_client
 
 Vectors = npt.NDArray[np.float32]
 NOISE = -1
@@ -46,13 +45,7 @@ class OpenAIEmbedder:
     ) -> None:
         self._config = config
         if client is None:
-            api_key, url = openai_credentials(config, os.environ if env is None else env)
-            if client_factory is None:
-                import openai
-
-                client_factory = openai.OpenAI
-            # base_url is explicit, so OPENAI_BASE_URL in the environment is ignored.
-            client = client_factory(api_key=api_key, base_url=url)
+            client = openai_client(config.base_url, env, client_factory)
         self._client: Any = client
 
     def embed(self, texts: Sequence[str]) -> Vectors:

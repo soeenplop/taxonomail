@@ -20,13 +20,14 @@ of each mail) and `clusters.json` (the clusters behind the folders).
 
 ## Configuration
 
-Embeddings come from any OpenAI-compatible embeddings API; the LLM is Claude or any
-OpenAI-compatible chat model. Set models and endpoints in a TOML file passed with `--config`
-(see [taxonomail.example.toml](taxonomail.example.toml)) and API keys in `.env` (see
-[.env.example](.env.example)). By default `ANTHROPIC_API_KEY` and `OPENAI_API_KEY` go only
-to the official APIs; a custom `base_url` gets only the key named in `api_key_env`
-(whichever variable you name there). `.env` is read from the working directory or a parent.
-IMAP always uses TLS.
+Every step (embedding, naming, consolidation) uses `OPENAI_API_KEY` with its own `base_url`,
+so any OpenAI-compatible endpoint works: OpenAI, Anthropic's OpenAI-compatible API
+(`https://api.anthropic.com/v1/`) for naming and consolidation, Ollama, Scaleway, and so on.
+Anthropic has no embeddings endpoint, so keep embeddings on another provider. The key is
+sent to whichever endpoints you configure. Set models and endpoints in a TOML file passed
+with `--config` (see [taxonomail.example.toml](taxonomail.example.toml)) and the key in
+`.env` (see [.env.example](.env.example)). `.env` is read from the working directory or a
+parent. IMAP always uses TLS.
 
 Mail text (sender domain, subject, start of the body) is sent to the embedding service and,
 for a few mails per cluster, to the LLM. The LLM also gets each cluster's keywords and size,

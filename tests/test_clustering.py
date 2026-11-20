@@ -56,22 +56,9 @@ def test_embedder_credentials_and_small_corpora() -> None:
         seen.append(kwargs)
         return object()
 
-    official = "https://api.openai.com/v1"
-    env = {"OPENAI_API_KEY": "sk-default", "OPENAI_BASE_URL": "https://evil.example", "K": "k"}
-    OpenAIEmbedder(EmbeddingConfig(), client_factory=factory, env=env)
-    OpenAIEmbedder(EmbeddingConfig(base_url=official + "/"), client_factory=factory, env=env)
-    local = EmbeddingConfig(base_url="http://localhost:11434/v1")
-    OpenAIEmbedder(local, client_factory=factory, env=env)
-    OpenAIEmbedder(local.model_copy(update={"api_key_env": "K"}), client_factory=factory, env=env)
-    assert seen == [
-        {"api_key": "sk-default", "base_url": official},
-        {"api_key": "sk-default", "base_url": official + "/"},
-        {"api_key": "unused", "base_url": "http://localhost:11434/v1"},
-        {"api_key": "k", "base_url": "http://localhost:11434/v1"},
-    ]
-    with pytest.raises(LLMError, match="MISSING") as info:
-        OpenAIEmbedder(EmbeddingConfig(api_key_env="MISSING"), client_factory=factory, env=env)
-    assert "sk-default" not in str(info.value)
+    env = {"OPENAI_API_KEY": "sk-default", "OPENAI_BASE_URL": "https://evil.example"}
+    OpenAIEmbedder(EmbeddingConfig(base_url="http://x/v1"), client_factory=factory, env=env)
+    assert seen == [{"api_key": "sk-default", "base_url": "http://x/v1"}]
     with pytest.raises(LLMError, match="OPENAI_API_KEY"):
         OpenAIEmbedder(EmbeddingConfig(), client_factory=factory, env={})
 

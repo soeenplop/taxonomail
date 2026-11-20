@@ -9,7 +9,7 @@ from taxonomail.config import Settings, load_settings
 @pytest.mark.parametrize(
     ("toml", "section", "field", "expected"),
     [
-        ("[naming]\nmax_tokens = 5\n", "naming", "model", "claude-sonnet-5-5"),
+        ("[naming]\nmax_tokens = 5\n", "naming", "model", "gpt-6.1-terra"),
         ('[naming]\nmodel = "m"\n', "naming", "max_tokens", 1000),
         ('[consolidation]\nmodel = "m"\n', "consolidation", "max_tokens", 16000),
     ],

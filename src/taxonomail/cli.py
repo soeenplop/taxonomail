@@ -18,7 +18,7 @@ from taxonomail.clustering import (
     OpenAIEmbedder,
 )
 from taxonomail.config import ClusteringConfig, EmbeddingConfig, LLMConfig, load_settings
-from taxonomail.llm import LLM, build_llm
+from taxonomail.llm import LLM, OpenAILLM
 from taxonomail.mail import Mail, parse_mail
 from taxonomail.output import write_result
 from taxonomail.pipeline import build_taxonomy
@@ -34,7 +34,7 @@ app = typer.Typer(
 # Factories, replaced by fakes in tests.
 make_embedder: Callable[[EmbeddingConfig], Embedder] = OpenAIEmbedder
 make_clusterer: Callable[[ClusteringConfig], Clusterer] = BERTopicClusterer
-make_llm: Callable[[LLMConfig], LLM] = build_llm
+make_llm: Callable[[LLMConfig], LLM] = OpenAILLM
 
 
 @app.callback()
