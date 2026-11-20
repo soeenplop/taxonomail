@@ -15,8 +15,8 @@ from taxonomail.llm import openai_credentials
 
 Vectors = npt.NDArray[np.float32]
 NOISE = -1
-MAX_TEXT_CHARS = 8000
-MAX_BATCH_CHARS = 100_000
+MAX_TEXT_BYTES = 8000
+MAX_BATCH_BYTES = 100_000
 EMPTY = "(empty)"
 
 
@@ -26,6 +26,12 @@ class Embedder(Protocol):
     def embed(self, texts: Sequence[str]) -> Vectors:
         """Embed ``texts``."""
         ...
+
+
+def _bound(text: str) -> str:
+    """At most ``MAX_TEXT_BYTES`` UTF-8 bytes (cut at a character boundary), never blank."""
+    cut = text.encode()[:MAX_TEXT_BYTES].decode(errors="ignore")
+    return cut.strip() or EMPTY
 
 
 class OpenAIEmbedder:
@@ -54,7 +60,7 @@ class OpenAIEmbedder:
         if not texts:
             return np.zeros((0, 0), dtype=np.float32)
         # Bounded, never blank, so every text yields exactly one row.
-        clean = [text[:MAX_TEXT_CHARS].strip() or EMPTY for text in texts]
+        clean = [_bound(text) for text in texts]
         rows: list[list[float]] = []
         for batch in self._batches(clean):
             response = self._client.embeddings.create(model=self._config.model, input=batch)
@@ -67,17 +73,18 @@ class OpenAIEmbedder:
         return (vectors / np.where(norms == 0, 1, norms)).astype(np.float32)
 
     def _batches(self, texts: list[str]) -> list[list[str]]:
-        """Batches of at most ``batch_size`` texts and ``MAX_BATCH_CHARS`` characters."""
+        """Batches of at most ``batch_size`` texts and ``MAX_BATCH_BYTES`` UTF-8 bytes."""
         batches: list[list[str]] = [[]]
-        chars = 0
+        size = 0
         for text in texts:
             if batches[-1] and (
-                len(batches[-1]) >= self._config.batch_size or chars + len(text) > MAX_BATCH_CHARS
+                len(batches[-1]) >= self._config.batch_size
+                or size + len(text.encode()) > MAX_BATCH_BYTES
             ):
                 batches.append([])
-                chars = 0
+                size = 0
             batches[-1].append(text)
-            chars += len(text)
+            size += len(text.encode())
         return batches
 
 
@@ -112,14 +119,15 @@ class BERTopicClusterer:
 
     def fit(self, docs: Sequence[str], vectors: Vectors) -> Clusters:
         """Fit BERTopic and return labels and keywords."""
+        c = self._config
+        n = len(docs)
+        # Too few mails for a cluster (and for UMAP's neighbors).
+        if n < max(3, c.min_cluster_size):
+            return Clusters(labels=[NOISE] * n, keywords={})
         from bertopic import BERTopic
         from hdbscan import HDBSCAN
         from umap import UMAP
 
-        c = self._config
-        n = len(docs)
-        if n < c.min_cluster_size:
-            return Clusters(labels=[NOISE] * n, keywords={})
         # UMAP's spectral init needs more points than neighbors and components.
         n_neighbors = min(c.n_neighbors, n - 1)
         n_components = max(1, min(c.n_components, n - 2))

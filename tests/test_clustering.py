@@ -38,6 +38,16 @@ def test_openai_embedder_batches_orders_and_normalizes() -> None:
     assert max(len(text) for text in sent) <= 8000
     assert all(sum(map(len, c["input"])) <= 100_000 for c in calls)
 
+    calls.clear()
+    OpenAIEmbedder(EmbeddingConfig(model="emb", batch_size=64), client).embed(
+        ["😀" * 5000] + ["é" * 3000] * 40
+    )
+    sent = [text for c in calls for text in c["input"]]
+    assert len(sent) == 41 and len(calls) >= 3
+    assert sent[0] == "😀" * 2000
+    assert max(len(text.encode()) for text in sent) <= 8000
+    assert all(sum(len(t.encode()) for t in c["input"]) <= 100_000 for c in calls)
+
 
 def test_embedder_credentials_and_small_corpora() -> None:
     seen: list[dict[str, Any]] = []
@@ -70,3 +80,7 @@ def test_embedder_credentials_and_small_corpora() -> None:
     assert clusterer.fit([], empty).labels == []
     small = clusterer.fit(["a", "b", "c"], np.eye(3, dtype=np.float32))
     assert small.labels == [-1, -1, -1] and small.keywords == {}
+    two = BERTopicClusterer(ClusteringConfig(min_cluster_size=2)).fit(
+        ["a", "b"], np.eye(2, dtype=np.float32)
+    )
+    assert two.labels == [-1, -1]
