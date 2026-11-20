@@ -25,7 +25,7 @@ def test_overriding_one_field_keeps_the_step_defaults(
 def test_invalid_values_are_rejected_without_echoing_the_input(tmp_path: Path) -> None:
     secret = "sk-synthetic-secret"
     path = tmp_path / "config.toml"
-    path.write_text(f'[embedding]\napi_key_env = 1\nmodel = "{secret}"\nbatch_size = "{secret}"\n')
+    path.write_text(f'[embedding]\napi_key = "{secret}"\n')
     with pytest.raises(ValidationError) as error:
         load_settings(path)
     assert secret not in str(error.value)

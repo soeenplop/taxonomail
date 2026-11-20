@@ -60,7 +60,7 @@ class ClusteringConfig(_Section):
     """BERTopic: UMAP and HDBSCAN settings."""
 
     n_neighbors: int = Field(default=15, ge=2)
-    n_components: int = 5
+    n_components: int = Field(default=5, ge=1)
     min_cluster_size: int = Field(default=10, ge=2)
     representatives: int = 8
     keywords: int = 10
