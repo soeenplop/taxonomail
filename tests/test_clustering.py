@@ -61,6 +61,10 @@ def test_embedder_credentials_and_small_corpora() -> None:
     assert seen == [{"api_key": "sk-default", "base_url": "http://x/v1"}]
     with pytest.raises(LLMError, match="OPENAI_API_KEY"):
         OpenAIEmbedder(EmbeddingConfig(), client_factory=factory, env={})
+    seen.clear()
+    own_key = EmbeddingConfig(base_url="http://x/v1", api_key_env="EMBED_KEY")
+    OpenAIEmbedder(own_key, client_factory=factory, env={**env, "EMBED_KEY": "e-test"})
+    assert seen == [{"api_key": "e-test", "base_url": "http://x/v1"}]
 
     clusterer = BERTopicClusterer(ClusteringConfig(min_cluster_size=5))
     empty = np.zeros((0, 3), dtype=np.float32)

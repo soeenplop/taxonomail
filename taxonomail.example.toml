@@ -1,21 +1,25 @@
 # Settings for `taxonomail run --config <file>`. Every value shown is the default; leave out
 # what you don't change.
 
-# Every step uses an OpenAI-compatible endpoint and the key in OPENAI_API_KEY.
+# Every step uses an OpenAI-compatible endpoint. api_key_env names the environment variable
+# that holds its key (never the key itself); .env is read too.
 
 [naming]                 # names each cluster
 model = "gpt-6.1-terra"
 base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
 max_tokens = 1000
 
 [consolidation]          # merges the named clusters into folders
 model = "gpt-6.2-astra"
 base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
 max_tokens = 16000
 
 [embedding]
 model = "text-embedding-3-small"
 base_url = "https://api.openai.com/v1"
+api_key_env = "OPENAI_API_KEY"
 batch_size = 64          # texts per request
 
 [clustering]

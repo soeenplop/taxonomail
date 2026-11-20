@@ -14,7 +14,7 @@ from typing import Any, Protocol
 
 from pydantic import BaseModel, ValidationError
 
-from taxonomail.config import LLMConfig
+from taxonomail.config import DEFAULT_KEY_ENV, EmbeddingConfig, LLMConfig
 
 ATTEMPTS = 2
 
@@ -87,18 +87,25 @@ def _strip_fences(text: str) -> str:
 
 
 def openai_client(
-    base_url: str, env: Mapping[str, str] | None, client_factory: Callable[..., Any] | None
+    config: LLMConfig | EmbeddingConfig,
+    env: Mapping[str, str] | None,
+    client_factory: Callable[..., Any] | None,
 ) -> Any:
-    """An OpenAI SDK client for ``base_url`` with the key from OPENAI_API_KEY."""
-    api_key = (os.environ if env is None else env).get("OPENAI_API_KEY")
+    """An OpenAI SDK client for the step's ``base_url`` with the key from ``api_key_env``."""
+    api_key = (os.environ if env is None else env).get(config.api_key_env)
     if not api_key:
-        raise LLMError("environment variable OPENAI_API_KEY is not set")
+        # Only the default is named: a custom value could be a key pasted by mistake.
+        if config.api_key_env == DEFAULT_KEY_ENV:
+            raise LLMError(f"environment variable {DEFAULT_KEY_ENV} is not set")
+        raise LLMError(
+            f"the environment variable named by [{config.section}] api_key_env is not set"
+        )
     if client_factory is None:
         import openai
 
         client_factory = openai.OpenAI
     # base_url is explicit, so OPENAI_BASE_URL in the environment is ignored.
-    return client_factory(api_key=api_key, base_url=base_url)
+    return client_factory(api_key=api_key, base_url=config.base_url)
 
 
 class OpenAILLM:
@@ -111,7 +118,7 @@ class OpenAILLM:
         env: Mapping[str, str] | None = None,
     ) -> None:
         self._config = config
-        self._client: Any = openai_client(config.base_url, env, client_factory)
+        self._client: Any = openai_client(config, env, client_factory)
 
     def chat(self, system: str, messages: list[dict[str, str]]) -> str:
         """Send one request and return the answer's text (the prompt asks for JSON)."""
