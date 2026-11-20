@@ -5,7 +5,7 @@ import pytest
 from pydantic import BaseModel, ConfigDict
 
 from taxonomail.config import LLMConfig
-from taxonomail.llm import AnthropicLLM, LLMError, OpenAILLM, ask_json, wrap_mail
+from taxonomail.llm import LLMError, OpenAILLM, ask_json, wrap_mail
 
 
 class Answer(BaseModel):
@@ -47,37 +47,13 @@ def test_failure_and_traceback_do_not_leak_the_response() -> None:
     assert "SECRET-MARKER" not in final
 
 
-def test_credential_selection() -> None:
-    env = {
-        "OPENAI_API_KEY": "sk-openai",
-        "ANTHROPIC_API_KEY": "sk-ant",
-        "MINE": "sk-mine",
-        "OPENAI_BASE_URL": "http://env-only/v1",
-        "ANTHROPIC_BASE_URL": "http://env-only",
-    }
-
-    def made(cls: type, **cfg: str) -> dict[str, str]:
-        kw: dict[str, str] = {}
-        cls(LLMConfig(model="m", **cfg), lambda **k: kw.update(k), env)
-        return kw
-
-    # The env-only endpoint is ignored: the explicit default URL goes with the default key.
-    assert made(OpenAILLM) == {"api_key": "sk-openai", "base_url": "https://api.openai.com/v1"}
-    assert made(AnthropicLLM) == {"api_key": "sk-ant", "base_url": "https://api.anthropic.com"}
-    official = {"base_url": "https://api.openai.com/v1/"}  # trailing slash is normalized
-    assert made(OpenAILLM, **official)["api_key"] == "sk-openai"
-    assert made(AnthropicLLM, base_url="https://api.anthropic.com/")["api_key"] == "sk-ant"
+def test_key_comes_from_openai_api_key_and_base_url_is_explicit() -> None:
+    env = {"OPENAI_API_KEY": "sk-test", "OPENAI_BASE_URL": "http://env-only/v1"}
+    kw: dict[str, str] = {}
+    OpenAILLM(LLMConfig(model="m", base_url="http://x/v1"), lambda **k: kw.update(k), env)
+    assert kw == {"api_key": "sk-test", "base_url": "http://x/v1"}
     with pytest.raises(LLMError, match="OPENAI_API_KEY"):
         OpenAILLM(LLMConfig(model="m"), lambda **k: None, {})
-    assert made(OpenAILLM, base_url="http://x/v1")["api_key"] == "unused"
-    assert made(OpenAILLM, base_url="http://x/v1", api_key_env="MINE")["api_key"] == "sk-mine"
-    assert made(AnthropicLLM, base_url="http://x", api_key_env="MINE")["api_key"] == "sk-mine"
-    with pytest.raises(LLMError, match="set api_key_env"):
-        made(AnthropicLLM, base_url="http://x")
-    for cls in (OpenAILLM, AnthropicLLM):
-        with pytest.raises(LLMError, match="NOPE") as info:
-            made(cls, api_key_env="NOPE")
-        assert "sk-" not in str(info.value)
 
 
 def test_wrap_mail_cannot_be_closed_by_the_excerpt() -> None:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
-from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -13,33 +12,28 @@ class _Section(BaseModel):
     model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
 
-class LLMConfig(_Section):
-    """One LLM step: which backend and model."""
+OPENAI_URL = "https://api.openai.com/v1"
 
-    provider: Literal["anthropic", "openai"] = "anthropic"
+
+class LLMConfig(_Section):
+    """One LLM step: an OpenAI-compatible chat endpoint and model."""
+
     model: str
-    base_url: str | None = Field(
-        default=None, description="For OpenAI-compatible servers, e.g. http://localhost:11434/v1"
-    )
-    api_key_env: str | None = Field(
-        default=None,
-        description="Environment variable with the API key; default ANTHROPIC_API_KEY or "
-        "OPENAI_API_KEY.",
-    )
+    base_url: str = OPENAI_URL
     max_tokens: int = 8000
 
 
 class NamingConfig(LLMConfig):
     """Defaults for the folder-naming step."""
 
-    model: str = "claude-sonnet-5-5"
+    model: str = "gpt-6.1-terra"
     max_tokens: int = 1000
 
 
 class ConsolidationConfig(LLMConfig):
     """Defaults for the taxonomy-consolidation step."""
 
-    model: str = "claude-opus-5-5"
+    model: str = "gpt-6.2-astra"
     max_tokens: int = 16000
 
 
@@ -47,14 +41,7 @@ class EmbeddingConfig(_Section):
     """An OpenAI-compatible embeddings endpoint (``POST /v1/embeddings``)."""
 
     model: str = "text-embedding-3-small"
-    base_url: str | None = Field(
-        default=None, description="Default: OpenAI. E.g. http://localhost:11434/v1 for Ollama."
-    )
-    api_key_env: str | None = Field(
-        default=None,
-        description="Environment variable with the API key; default OPENAI_API_KEY for the "
-        "official endpoint, none for a custom base_url.",
-    )
+    base_url: str = OPENAI_URL
     batch_size: int = Field(default=64, ge=1)
 
 
