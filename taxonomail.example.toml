@@ -16,11 +16,12 @@ max_tokens = 16000
 # provider = "openai"
 # model = "qwen3:32b"
 # base_url = "http://localhost:11434/v1"
+# api_key_env = "MY_LLM_KEY"   # only if the server needs a key
 
 [embedding]              # any OpenAI-compatible embeddings API
 model = "text-embedding-3-small"
 # base_url = "http://localhost:11434/v1"   # e.g. Ollama; default: OpenAI
-api_key_env = "OPENAI_API_KEY"
+# api_key_env = "MY_EMBEDDINGS_KEY"  # key for a custom base_url; OPENAI_API_KEY is only sent to OpenAI
 batch_size = 64          # texts per request
 
 [clustering]
