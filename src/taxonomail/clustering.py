@@ -45,7 +45,7 @@ class OpenAIEmbedder:
     ) -> None:
         self._config = config
         if client is None:
-            client = openai_client(config.base_url, config.api_key_env, env, client_factory)
+            client = openai_client(config, env, client_factory)
         self._client: Any = client
 
     def embed(self, texts: Sequence[str]) -> Vectors:

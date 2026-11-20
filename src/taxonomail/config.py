@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import tomllib
 from pathlib import Path
+from typing import ClassVar
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -13,6 +14,7 @@ class _Section(BaseModel):
 
 
 OPENAI_URL = "https://api.openai.com/v1"
+DEFAULT_KEY_ENV = "OPENAI_API_KEY"
 # Upper-case variable names only, so a pasted key (mixed case, "-") fails validation instead
 # of ending up in an error message.
 ENV_NAME = r"^[A-Z_][A-Z0-9_]{0,63}$"
@@ -21,9 +23,10 @@ ENV_NAME = r"^[A-Z_][A-Z0-9_]{0,63}$"
 class LLMConfig(_Section):
     """One LLM step: an OpenAI-compatible chat endpoint and model."""
 
+    section: ClassVar[str] = "naming/consolidation"
     model: str
     base_url: str = OPENAI_URL
-    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME, repr=False)
+    api_key_env: str = Field(default=DEFAULT_KEY_ENV, pattern=ENV_NAME, repr=False)
     """Name of the environment variable that holds the key, never the key itself."""
     max_tokens: int = 8000
 
@@ -31,6 +34,7 @@ class LLMConfig(_Section):
 class NamingConfig(LLMConfig):
     """Defaults for the folder-naming step."""
 
+    section: ClassVar[str] = "naming"
     model: str = "gpt-6.1-terra"
     max_tokens: int = 1000
 
@@ -38,6 +42,7 @@ class NamingConfig(LLMConfig):
 class ConsolidationConfig(LLMConfig):
     """Defaults for the taxonomy-consolidation step."""
 
+    section: ClassVar[str] = "consolidation"
     model: str = "gpt-6.2-astra"
     max_tokens: int = 16000
 
@@ -45,9 +50,10 @@ class ConsolidationConfig(LLMConfig):
 class EmbeddingConfig(_Section):
     """An OpenAI-compatible embeddings endpoint (``POST /v1/embeddings``)."""
 
+    section: ClassVar[str] = "embedding"
     model: str = "text-embedding-3-small"
     base_url: str = OPENAI_URL
-    api_key_env: str = Field(default="OPENAI_API_KEY", pattern=ENV_NAME, repr=False)
+    api_key_env: str = Field(default=DEFAULT_KEY_ENV, pattern=ENV_NAME, repr=False)
     """Name of the environment variable that holds the key, never the key itself."""
     batch_size: int = Field(default=64, ge=1)
 

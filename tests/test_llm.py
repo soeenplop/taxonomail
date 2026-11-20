@@ -4,7 +4,7 @@ import traceback
 import pytest
 from pydantic import BaseModel, ConfigDict
 
-from taxonomail.config import LLMConfig
+from taxonomail.config import LLMConfig, NamingConfig
 from taxonomail.llm import LLMError, OpenAILLM, ask_json, wrap_mail
 
 
@@ -62,9 +62,18 @@ def test_key_variable_is_configurable() -> None:
     config = LLMConfig(model="m", base_url="http://x/v1", api_key_env="SCW_SECRET_KEY")
     OpenAILLM(config, lambda **k: kw.update(k), env)
     assert kw == {"api_key": "scw-test", "base_url": "http://x/v1"}
-    with pytest.raises(LLMError, match="SCW_SECRET_KEY") as info:
+    with pytest.raises(LLMError, match="api_key_env") as info:
         OpenAILLM(config, lambda **k: None, {"OPENAI_API_KEY": "sk-default"})
     assert "sk-default" not in str(info.value)
+
+
+def test_missing_key_error_never_shows_a_custom_variable_name() -> None:
+    # An upper-case hex token passes the name pattern if pasted into api_key_env by mistake.
+    token = "ABCDEF0123456789ABCDEF0123456789"
+    with pytest.raises(LLMError) as info:
+        OpenAILLM(NamingConfig(api_key_env=token), lambda **k: None, {})
+    assert token not in str(info.value)
+    assert "[naming] api_key_env" in str(info.value)
 
 
 def test_wrap_mail_cannot_be_closed_by_the_excerpt() -> None:
