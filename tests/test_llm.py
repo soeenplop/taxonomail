@@ -36,11 +36,13 @@ class Strict(BaseModel):
 
 
 def test_failure_and_traceback_do_not_leak_the_response() -> None:
-    llm = Scripted('{"name": 1, "SECRET-MARKER": 2} SECRET-MARKER', '{"SECRET-MARKER": 1}')
+    llm = Scripted('{"SECRET-MARKER": 1}', '{"name": 1} SECRET-MARKER')
     with pytest.raises(LLMError) as info:
         ask_json(llm, "s", "u", Strict)
     assert len(llm.seen) == 2
-    assert "SECRET-MARKER" not in llm.seen[1][2]["content"]
+    feedback = llm.seen[1][2]["content"]
+    assert "extra_forbidden" in feedback
+    assert "SECRET-MARKER" not in feedback
     final = "".join(traceback.format_exception(info.value))
     assert "SECRET-MARKER" not in final
 
@@ -62,6 +64,11 @@ def test_credential_selection() -> None:
     # The env-only endpoint is ignored: the explicit default URL goes with the default key.
     assert made(OpenAILLM) == {"api_key": "sk-openai", "base_url": "https://api.openai.com/v1"}
     assert made(AnthropicLLM) == {"api_key": "sk-ant", "base_url": "https://api.anthropic.com"}
+    official = {"base_url": "https://api.openai.com/v1/"}  # trailing slash is normalized
+    assert made(OpenAILLM, **official)["api_key"] == "sk-openai"
+    assert made(AnthropicLLM, base_url="https://api.anthropic.com/")["api_key"] == "sk-ant"
+    with pytest.raises(LLMError, match="OPENAI_API_KEY"):
+        OpenAILLM(LLMConfig(model="m"), lambda **k: None, {})
     assert made(OpenAILLM, base_url="http://x/v1")["api_key"] == "unused"
     assert made(OpenAILLM, base_url="http://x/v1", api_key_env="MINE")["api_key"] == "sk-mine"
     assert made(AnthropicLLM, base_url="http://x", api_key_env="MINE")["api_key"] == "sk-mine"

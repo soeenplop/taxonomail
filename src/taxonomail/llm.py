@@ -88,6 +88,12 @@ def _strip_fences(text: str) -> str:
     return match.group(1) if match else text
 
 
+def _endpoint(config: LLMConfig, official: str) -> tuple[str, bool]:
+    """The URL the SDK will use and whether it is the official one."""
+    url = config.base_url or official
+    return url, url.rstrip("/") == official.rstrip("/")
+
+
 class AnthropicLLM:
     """Claude through the Anthropic SDK."""
 
@@ -99,8 +105,9 @@ class AnthropicLLM:
     ) -> None:
         env = os.environ if env is None else env
         name = config.api_key_env
+        url, official = _endpoint(config, ANTHROPIC_URL)
         # A named variable must exist: None would make the SDK use ambient credentials.
-        if not name and config.base_url:
+        if not name and not official:
             raise LLMError("set api_key_env for a custom Anthropic base_url")
         api_key = env.get(name or "ANTHROPIC_API_KEY")
         if name and not api_key:
@@ -111,9 +118,7 @@ class AnthropicLLM:
             client_factory = anthropic.Anthropic
         self._config = config
         # Explicit, so ANTHROPIC_BASE_URL in the environment is ignored.
-        self._client: Any = client_factory(
-            api_key=api_key, base_url=config.base_url or ANTHROPIC_URL
-        )
+        self._client: Any = client_factory(api_key=api_key, base_url=url)
 
     def chat(self, system: str, messages: list[dict[str, str]]) -> str:
         """Send one request and return the text blocks of the answer."""
@@ -137,23 +142,24 @@ class OpenAILLM:
     ) -> None:
         env = os.environ if env is None else env
         # A custom endpoint never gets OPENAI_API_KEY; keyless servers get a placeholder.
-        name = config.api_key_env or (None if config.base_url else "OPENAI_API_KEY")
-        api_key = env.get(name) if name else None
-        if config.api_key_env and not api_key:
+        url, official = _endpoint(config, OPENAI_URL)
+        name = config.api_key_env or ("OPENAI_API_KEY" if official else None)
+        api_key = env.get(name) if name else "unused"
+        if not api_key:
             raise LLMError(f"environment variable {name} is not set")
-        api_key = api_key or "unused"
         if client_factory is None:
             import openai
 
             client_factory = openai.OpenAI
         self._config = config
+        self._official = official
         # Explicit, so OPENAI_BASE_URL in the environment is ignored.
-        self._client: Any = client_factory(api_key=api_key, base_url=config.base_url or OPENAI_URL)
+        self._client: Any = client_factory(api_key=api_key, base_url=url)
 
     def chat(self, system: str, messages: list[dict[str, str]]) -> str:
         """Send one request in JSON mode and return the answer's text."""
         # OpenAI itself wants max_completion_tokens; compatible servers still take max_tokens.
-        limit = "max_tokens" if self._config.base_url else "max_completion_tokens"
+        limit = "max_completion_tokens" if self._official else "max_tokens"
         response = self._client.chat.completions.create(
             model=self._config.model,
             messages=[{"role": "system", "content": system}, *messages],
