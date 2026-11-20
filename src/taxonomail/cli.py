@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Annotated
 
 import typer
-from dotenv import load_dotenv
+from dotenv import find_dotenv, load_dotenv
 
 from taxonomail.clustering import (
     BERTopicClusterer,
@@ -68,14 +68,14 @@ def run(
     config: Annotated[
         Path | None, typer.Option(help="TOML settings file (models, clustering).", dir_okay=False)
     ] = None,
-    limit: Annotated[int | None, typer.Option(help="Use at most this many mails.")] = None,
+    limit: Annotated[int | None, typer.Option(min=1, help="Use at most this many mails.")] = None,
 ) -> None:
     """Read a mailbox, cluster it with BERTopic, and let an LLM turn the clusters into folders.
 
     Writes taxonomy.yaml (the folders), assignments.jsonl (the folder of every mail) and
     clusters.json (the named clusters) to --out.
     """
-    load_dotenv()
+    load_dotenv(find_dotenv(usecwd=True))
     settings = load_settings(config)
     if (maildir is None) == (imap_host is None):
         raise typer.BadParameter("give either --maildir or --imap-host")

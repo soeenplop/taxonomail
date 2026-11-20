@@ -12,7 +12,7 @@ from taxonomail.pipeline import Result
 
 def write_result(result: Result, out: Path) -> None:
     """Write the taxonomy, the folder of every mail and the named clusters to ``out``."""
-    out.mkdir(parents=True, exist_ok=True)
+    out.mkdir(mode=0o700, parents=True, exist_ok=True)  # private: it holds mail metadata
     taxonomy = {
         "folders": [
             {"id": f.id, "name": f.name, "description": f.description, "mails": f.size}

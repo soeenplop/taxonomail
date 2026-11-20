@@ -13,7 +13,8 @@ runner = CliRunner(env={"NO_COLOR": "1", "TERM": "dumb", "FORCE_COLOR": None})
 
 
 @pytest.fixture
-def fakes(monkeypatch: pytest.MonkeyPatch) -> FakeLLM:
+def fakes(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeLLM:
+    monkeypatch.chdir(tmp_path)  # no .env from the checkout
     llm = FakeLLM()
     monkeypatch.setattr(cli, "make_embedder", lambda config: FakeEmbedder())
     monkeypatch.setattr(cli, "make_clusterer", lambda config: FakeClusterer())
