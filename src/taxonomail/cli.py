@@ -65,7 +65,6 @@ def run(
     ] = "IMAP_PASSWORD",
     imap_port: Annotated[int, typer.Option(help="IMAP port.")] = 993,
     imap_folder: Annotated[str, typer.Option(help="IMAP folder to read.")] = "INBOX",
-    imap_no_ssl: Annotated[bool, typer.Option(help="Connect without TLS.")] = False,
     config: Annotated[
         Path | None, typer.Option(help="TOML settings file (models, clustering).", dir_okay=False)
     ] = None,
@@ -86,17 +85,15 @@ def run(
         assert imap_host is not None
         if imap_user is None:
             raise typer.BadParameter("--imap-host needs --imap-user")
-        password = os.environ.get(imap_password_env)
-        if password is None:
+        if imap_password_env not in os.environ:
             raise typer.BadParameter(f"set the IMAP password in ${imap_password_env}")
         raw = read_imap(
             ImapSettings(
                 host=imap_host,
                 user=imap_user,
-                password=password,
+                password_env=imap_password_env,
                 port=imap_port,
                 folder=imap_folder,
-                ssl=not imap_no_ssl,
             )
         )
     mails = _load(raw, limit)
