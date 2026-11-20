@@ -2,11 +2,17 @@
 
 from __future__ import annotations
 
+import base64
 import imaplib
+import logging
 import mailbox
+import os
+import ssl
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+
+log = logging.getLogger(__name__)
 
 
 def read_maildir(path: Path) -> Iterator[bytes]:
@@ -15,30 +21,41 @@ def read_maildir(path: Path) -> Iterator[bytes]:
         raise FileNotFoundError(f"{path} is not a Maildir (no cur/ or new/)")
     box = mailbox.Maildir(path, factory=None, create=False)
     for key in sorted(box.keys()):
-        with box.get_file(key) as handle:
-            yield handle.read()
+        try:
+            with box.get_file(key) as handle:
+                raw = handle.read()
+        except (OSError, KeyError):
+            log.warning("skipping unreadable message %s", key)
+            continue
+        yield raw
 
 
 @dataclass(frozen=True)
 class ImapSettings:
-    """Where to read mail from over IMAP."""
+    """Where to read mail from over IMAP (TLS only). The password is never stored here."""
 
     host: str
     user: str
-    password: str
+    password_env: str = "IMAP_PASSWORD"
     port: int = 993
     folder: str = "INBOX"
-    ssl: bool = True
 
 
 def read_imap(settings: ImapSettings, batch: int = 100) -> Iterator[bytes]:
     """Yield the raw bytes of every message in one IMAP folder, without changing any flags."""
-    connect = imaplib.IMAP4_SSL if settings.ssl else imaplib.IMAP4
-    with connect(settings.host, settings.port) as imap:
-        imap.login(settings.user, settings.password)
-        status, _ = imap.select(_quote(settings.folder), readonly=True)
+    folder = _quote(settings.folder)  # validate before connecting
+    if settings.password_env not in os.environ:
+        raise RuntimeError(f"environment variable {settings.password_env} is not set")
+    context = ssl.create_default_context()
+    with imaplib.IMAP4_SSL(settings.host, settings.port, ssl_context=context) as imap:
+        imap.debug = 0
+        try:
+            imap.login(settings.user, os.environ[settings.password_env])
+        except imaplib.IMAP4.error:
+            raise RuntimeError("IMAP login failed") from None
+        status, _ = imap.select(folder, readonly=True)
         if status != "OK":
-            raise RuntimeError(f"can't open IMAP folder {settings.folder!r}")
+            raise RuntimeError("can't open IMAP folder")
         status, data = imap.uid("SEARCH", "ALL")
         if status != "OK":
             raise RuntimeError("IMAP search failed")
@@ -53,5 +70,28 @@ def read_imap(settings: ImapSettings, batch: int = 100) -> Iterator[bytes]:
                     yield item[1]
 
 
+def _utf7(name: str) -> str:
+    """Encode a folder name as IMAP modified UTF-7 (RFC 3501 section 5.1.3)."""
+    out: list[str] = []
+    run: list[str] = []
+
+    def flush() -> None:
+        if run:
+            b64 = base64.b64encode("".join(run).encode("utf-16-be")).decode()
+            out.append("&" + b64.rstrip("=").replace("/", ",") + "-")
+            run.clear()
+
+    for char in name:
+        if " " <= char <= "~":
+            flush()
+            out.append("&-" if char == "&" else char)
+        else:
+            run.append(char)
+    flush()
+    return "".join(out)
+
+
 def _quote(folder: str) -> str:
-    return '"' + folder.replace("\\", "\\\\").replace('"', '\\"') + '"'
+    if any(char in folder for char in "\r\n\0"):
+        raise ValueError("invalid IMAP folder name")
+    return '"' + _utf7(folder).replace("\\", "\\\\").replace('"', '\\"') + '"'
