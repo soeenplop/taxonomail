@@ -117,3 +117,24 @@ def test_folder_id_without_ascii_letters_is_asked_again() -> None:
     result = run(llm)
     assert "folders: value_error" in llm.calls[-1][1][-1]["content"]
     assert [f.id for f in result.folders] == ["invoices", "travel", "club"]
+
+
+def test_ids_that_collide_after_the_retry_get_a_suffix() -> None:
+    def colliding(ids: list[int]) -> dict[str, object]:
+        folders = [
+            {"id": "café", "name": "Café", "description": "d", "clusters": [0]},
+            {"id": "cafe", "name": "Cafe", "description": "d", "clusters": [1]},
+            {"id": "Café!", "name": "Café!", "description": "d", "clusters": [2]},
+        ]
+        return {"folders": folders}
+
+    llm = FakeLLM([colliding, colliding])
+    result = run(llm, Settings(taxonomy=TaxonomyConfig(min_folders=3)))
+    consolidations = [m for _, m in llm.calls if "exactly one folder" in m[0]["content"]]
+    assert "folders 1 and 2 use the same id" in consolidations[1][0]["content"]
+    assert [(f.id, f.name, f.size) for f in result.folders] == [
+        ("cafe", "Café", 5),
+        ("cafe-2", "Cafe", 4),
+        ("cafe-3", "Café!", 4),
+    ]
+    assert result.cluster_folders == {0: "cafe", 1: "cafe-2", 2: "cafe-3"}

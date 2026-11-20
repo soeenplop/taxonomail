@@ -162,6 +162,19 @@ def _problems(plan: FolderPlan, cluster_ids: Sequence[int], settings: Settings) 
     return problems
 
 
+def _unique_ids(plan: FolderPlan) -> FolderPlan:
+    """Give folders that share an id a numeric suffix: "cafe", "cafe-2", ..."""
+    seen: set[str] = set()
+    folders = []
+    for folder in plan.folders:
+        unique, n = folder.id, 2
+        while unique in seen:
+            unique, n = f"{folder.id}-{n}", n + 1
+        seen.add(unique)
+        folders.append(folder.model_copy(update={"id": unique}))
+    return FolderPlan(folders=folders)
+
+
 def consolidate(
     clusters: Clusters, names: dict[int, ClusterName], llm: LLM, settings: Settings, log: Log
 ) -> FolderPlan:
@@ -198,7 +211,7 @@ def consolidate(
     if problems:
         log(f"folder plan has {len(problems)} problems, asking again")
         retry = f"{user}\n\nA previous answer had these problems:\n" + "\n".join(problems)
-        plan = ask_json(llm, system, retry, FolderPlan)
+        plan = _unique_ids(ask_json(llm, system, retry, FolderPlan))
         if (problem := _count_problem(plan, clusters.ids, settings)) is not None:
             raise ValueError(problem)
     return plan

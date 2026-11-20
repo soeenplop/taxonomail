@@ -32,8 +32,9 @@ of each mail) and `clusters.json` (the clusters behind the folders).
    keywords and groups the clusters into between `min_folders` and `max_folders` folders;
    the minimum is capped at the number of clusters. A plan with mapping errors (a cluster
    missing, unknown or in two folders), duplicate folder ids or too many or too few folders
-   is sent back once with the problems listed. If the folder count is still out of range,
-   the run stops. A cluster the plan still leaves out goes, as a whole, to the folder whose
+   is sent back once with the problems listed. Folder ids still shared after that get a
+   numeric suffix (`cafe`, `cafe-2`). If the folder count is still out of range, the run
+   stops. A cluster the plan still leaves out goes, as a whole, to the folder whose
    mean vector is most similar (cosine) to the cluster's mean vector.
 5. **Assign.** Each clustered mail goes to its cluster's folder. Each noise mail goes to the
    folder whose mean vector is closest to it (`method: nearest` in `assignments.jsonl`).
