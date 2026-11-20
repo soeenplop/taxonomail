@@ -43,3 +43,14 @@ def test_lf_and_crlf_give_the_same_mail() -> None:
     crlf = lf.replace(b"\n", b"\r\n")
     assert parse_mail(lf) == parse_mail(crlf)
     assert parse_mail(lf).sender == "j@example.org"
+
+
+def test_forwarded_mail_and_nul_charset() -> None:
+    forwarded = (
+        b"Subject: Fwd\nContent-Type: multipart/mixed; boundary=b\n\n"
+        b"--b\nContent-Type: text/html\n\n<p>Outer</p>\n"
+        b"--b\nContent-Type: message/rfc822\n\nSubject: In\n\nInner text\n--b--\n"
+    )
+    assert parse_mail(forwarded).body == "Outer"
+    nul = b'Subject: Hi\nContent-Type: text/plain; charset="utf\x00-8"\n\ncaf\xc3\xa9'
+    assert parse_mail(nul).body == "café"

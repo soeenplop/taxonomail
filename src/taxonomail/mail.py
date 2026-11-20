@@ -72,9 +72,9 @@ def _is_attachment(part: EmailMessage) -> bool:
 
 def _candidates(part: EmailMessage, found: dict[str, EmailMessage]) -> None:
     """Collect the first plain and html body parts, skipping attachments and their children."""
-    if _is_attachment(part):
+    if _is_attachment(part) or part.get_content_type() == "message/rfc822":
         return
-    if part.is_multipart():
+    if part.get_content_maintype() == "multipart":
         for child in part.iter_parts():
             assert isinstance(child, EmailMessage)
             _candidates(child, found)
@@ -90,12 +90,19 @@ def _decode(part: EmailMessage) -> str:
     for encoding in (charset, "utf-8", "cp1252"):
         try:
             return payload.decode(encoding)
-        except (LookupError, UnicodeDecodeError):
+        except (LookupError, ValueError):
             continue
     return payload.decode("utf-8", "replace")
 
 
 def _body(message: EmailMessage) -> str:
+    try:
+        return _extract_body(message)
+    except Exception:  # one bad mail must never abort a run
+        return ""
+
+
+def _extract_body(message: EmailMessage) -> str:
     found: dict[str, EmailMessage] = {}
     _candidates(message, found)
     part = found.get("plain") or found.get("html")
