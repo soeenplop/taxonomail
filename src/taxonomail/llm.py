@@ -102,7 +102,7 @@ def openai_client(
 
 
 class OpenAILLM:
-    """Any OpenAI-compatible chat endpoint (OpenAI, Anthropic, Ollama, ...)."""
+    """Any OpenAI-compatible chat endpoint (OpenAI, Ollama, ...)."""
 
     def __init__(
         self,

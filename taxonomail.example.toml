@@ -8,18 +8,12 @@ model = "gpt-6.1-terra"
 base_url = "https://api.openai.com/v1"
 max_tokens = 1000
 
-# Claude through Anthropic's OpenAI-compatible API (replace the [naming] section above).
-# The one key in OPENAI_API_KEY is sent to every endpoint you configure.
-# [naming]
-# model = "claude-sonnet-5-5"
-# base_url = "https://api.anthropic.com/v1/"
-
 [consolidation]          # merges the named clusters into folders
 model = "gpt-6.2-astra"
 base_url = "https://api.openai.com/v1"
 max_tokens = 16000
 
-[embedding]              # Anthropic has no embeddings endpoint
+[embedding]
 model = "text-embedding-3-small"
 base_url = "https://api.openai.com/v1"
 batch_size = 64          # texts per request
