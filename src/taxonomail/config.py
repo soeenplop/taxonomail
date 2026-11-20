@@ -50,8 +50,10 @@ class EmbeddingConfig(_Section):
     base_url: str | None = Field(
         default=None, description="Default: OpenAI. E.g. http://localhost:11434/v1 for Ollama."
     )
-    api_key_env: str = Field(
-        default="OPENAI_API_KEY", description="Environment variable with the API key."
+    api_key_env: str | None = Field(
+        default=None,
+        description="Environment variable with the API key; default OPENAI_API_KEY for the "
+        "official endpoint, none for a custom base_url.",
     )
     batch_size: int = Field(default=64, ge=1)
 
