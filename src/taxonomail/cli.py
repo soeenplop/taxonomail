@@ -25,7 +25,7 @@ from taxonomail.classify import (
     FatalClassifyError,
     JevClassifier,
     Verdict,
-    folder_path,
+    folder_paths,
     load_taxonomy,
 )
 from taxonomail.clustering import (
@@ -258,9 +258,9 @@ def classify(
     if move and maildir is not None:
         raise typer.BadParameter("--move needs --imap-host", param_hint="--move")
     try:
-        paths = {c.id: folder_path(c, prefix) for c in categories}
+        paths = folder_paths(categories, prefix)
     except ValueError as exc:
-        raise typer.BadParameter(str(exc), param_hint="--prefix") from None
+        raise typer.BadParameter(str(exc)) from None
     try:
         classifier = make_classifier(settings.classification, categories, 3)
     except FatalClassifyError as exc:
@@ -389,7 +389,7 @@ def classify_mail(
         _load_env(None if env_file is None else Path(env_file))
         settings = load_settings(None if config is None else Path(config))
         categories = load_taxonomy(Path(taxonomy))
-        paths = {c.id: folder_path(c, prefix) for c in categories}
+        paths = folder_paths(categories, prefix)
         verdict = make_classifier(settings.classification, categories, 0).classify(parse_mail(raw))
     except ClassifyError as exc:
         typer.echo(f"taxonomail: {exc}", err=True)

@@ -97,6 +97,17 @@ def folder_path(category: Category, prefix: str = "") -> str:
     return prefix + (name or category.id)
 
 
+def folder_paths(categories: list[Category], prefix: str = "") -> dict[str, str]:
+    """Mailbox name per folder id; fails when two folders would share a mailbox."""
+    paths = {c.id: folder_path(c, prefix) for c in categories}
+    seen: set[str] = set()
+    for path in paths.values():
+        if path.casefold() in seen:
+            raise ValueError("two folders get the same mailbox name; rename one in taxonomy.yaml")
+        seen.add(path.casefold())
+    return paths
+
+
 @dataclass(frozen=True)
 class Verdict:
     """The folder Jev picked, or ``None`` when its probability is below the threshold."""

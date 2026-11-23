@@ -1,4 +1,4 @@
-"""Read raw messages from a Maildir or an IMAP folder (read-only)."""
+"""Read raw messages from a Maildir or an IMAP folder; move messages over IMAP."""
 
 from __future__ import annotations
 
@@ -11,6 +11,7 @@ import re
 import ssl
 from collections.abc import Iterator
 from dataclasses import dataclass
+from itertools import pairwise
 from pathlib import Path
 from typing import Any
 
@@ -140,7 +141,31 @@ def _capabilities(imap: imaplib.IMAP4_SSL) -> set[str]:
     return set(data[-1].decode("ascii", "replace").upper().split())
 
 
-_UID = re.compile(rb"\bUID (\d+)", re.IGNORECASE)
+_TOKEN = re.compile(rb'"(?:[^"\\]|\\.)*"|[()\[\]]|[^\s()\[\]"]+')
+
+
+def _top_level_uid(data: bytes, depth: int) -> str | None:
+    """The value of a ``UID`` attribute directly inside the FETCH list (depth 1).
+
+    ``depth`` is the nesting level at the start of ``data``: 0 for the response head, 1 for
+    the trailer after a literal. Nested lists, sections and quoted strings are skipped, so a
+    flag named ``UID`` in ``FLAGS (UID 42)`` is never taken for the message's UID.
+    """
+    atoms: list[tuple[int, bytes]] = []  # (depth, atom), with brackets as depth changes
+    for match in _TOKEN.finditer(data):
+        token = match.group()
+        if token in (b"(", b"["):
+            depth += 1
+            atoms.append((-1, token))
+        elif token in (b")", b"]"):
+            depth -= 1
+            atoms.append((-1, token))
+        else:
+            atoms.append((depth, token))
+    for (level, name), (next_level, value) in pairwise(atoms):
+        if level == next_level == 1 and name.upper() == b"UID" and value.isdigit():
+            return value.decode()
+    return None
 
 
 def _with_uids(fetched: list[Any]) -> Iterator[tuple[str, bytes]]:
@@ -156,12 +181,10 @@ def _with_uids(fetched: list[Any]) -> Iterator[tuple[str, bytes]]:
         if isinstance(item, tuple) and len(item) == 2:
             if body is not None:
                 yield _require(uid), body
-            match = _UID.search(item[0])
-            uid, body = (match.group(1).decode() if match else None), item[1]
+            uid, body = _top_level_uid(item[0], 0), item[1]
         elif isinstance(item, bytes) and body is not None:
             if uid is None:
-                match = _UID.search(item)
-                uid = match.group(1).decode() if match else None
+                uid = _top_level_uid(item, 1)
             yield _require(uid), body
             uid, body = None, None
     if body is not None:

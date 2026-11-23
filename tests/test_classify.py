@@ -10,6 +10,7 @@ from taxonomail.classify import (
     FatalClassifyError,
     JevClassifier,
     folder_path,
+    folder_paths,
     load_taxonomy,
 )
 from taxonomail.config import ClassificationConfig
@@ -230,3 +231,10 @@ def test_a_rejected_mail_is_not_fatal(run: Path) -> None:
     assert not isinstance(info.value, FatalClassifyError)
     assert classifier.classify(MAIL).folder == "club"
     assert sleeps == []
+
+
+def test_folders_must_not_share_a_mailbox() -> None:
+    categories = [Category("a", "Bills/Receipts", ""), Category("b", "bills.receipts", "")]
+    with pytest.raises(ValueError, match="same mailbox"):
+        folder_paths(categories)
+    assert folder_paths(categories[:1], "INBOX.") == {"a": "INBOX.Bills-Receipts"}

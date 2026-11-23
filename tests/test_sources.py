@@ -229,10 +229,18 @@ def test_failed_subscribe_stops_before_moving(monkeypatch: pytest.MonkeyPatch) -
             [(b"1 (UID 11 BODY[] {5}", b"raw-1"), b")", b"9 (UID 42 FLAGS (\\Seen))"],
             [("11", b"raw-1")],
         ),
+        ([(b"7 (FLAGS (UID 42) UID 11 BODY[] {5}", b"raw-1"), b")"], [("11", b"raw-1")]),
+        ([(b"7 (BODY[] {5}", b"raw-1"), b" FLAGS (UID 42) UID 11)"], [("11", b"raw-1")]),
+        ([(b'7 (X "UID 42" UID 11 BODY[] {5}', b"raw-1"), b")"], [("11", b"raw-1")]),
     ],
 )
 def test_fetch_parsing(fetched: list[Any], expected: list[tuple[str, bytes]]) -> None:
     assert list(_with_uids(fetched)) == expected
+
+
+def test_a_flag_named_uid_is_not_a_uid() -> None:
+    with pytest.raises(RuntimeError, match="without its UID"):
+        list(_with_uids([(b"7 (FLAGS (UID 42) BODY[] {5}", b"raw-1"), b")"]))
 
 
 def test_a_body_never_borrows_a_later_uid() -> None:

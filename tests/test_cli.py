@@ -293,7 +293,9 @@ class Stdin:
         return self.buffer.tell() == len(self.buffer.getvalue())
 
 
-@pytest.mark.parametrize("case", ["too-large", "bad-config", "taxonomy-is-a-file"])
+@pytest.mark.parametrize(
+    "case", ["too-large", "bad-config", "taxonomy-is-a-file", "mailbox-collision"]
+)
 def test_classify_mail_reads_all_input_and_fails_open(
     case: str, tmp_path: Path, classifier: FakeClassifier, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -305,8 +307,10 @@ def test_classify_mail_reads_all_input_and_fails_open(
     elif case == "bad-config":
         (tmp_path / "bad.toml").write_text("[nope]\n")
         args += ["--config", str(tmp_path / "bad.toml")]
-    else:
+    elif case == "taxonomy-is-a-file":
         args = ["--taxonomy", str(run / "taxonomy.yaml")]
+    else:
+        collide(run)
     stdin = Stdin(mail)
     monkeypatch.setattr(sys, "stdin", stdin)
     output = io.StringIO()
@@ -319,4 +323,22 @@ def test_classify_mail_reads_all_input_and_fails_open(
     assert output.getvalue() == ""
     assert "taxonomail:" in errors.getvalue()
     assert stdin.at_eof
+    assert not classifier.seen
+
+
+def collide(run: Path) -> None:
+    taxonomy = yaml.safe_load((run / "taxonomy.yaml").read_text())
+    taxonomy["folders"][1]["name"] = taxonomy["folders"][0]["name"].replace("/", ".")
+    (run / "taxonomy.yaml").write_text(yaml.safe_dump(taxonomy))
+
+
+def test_classify_refuses_folders_that_share_a_mailbox(
+    tmp_path: Path, classifier: FakeClassifier
+) -> None:
+    run = write_taxonomy(tmp_path / "run")
+    collide(run)
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(topic_maildir(tmp_path))]
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 2
+    assert "same mailbox" in result.output
     assert not classifier.seen
