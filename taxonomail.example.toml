@@ -1,4 +1,4 @@
-# Settings for `taxonomail run --config <file>`. Every value shown is the default; leave out
+# Settings for `taxonomail run|classify|classify-mail --config <file>`. Every value shown is the default; leave out
 # what you don't change.
 
 # Every step uses an OpenAI-compatible endpoint. api_key_env names the environment variable
@@ -34,3 +34,11 @@ seed = 0                 # UMAP random state
 min_folders = 8
 max_folders = 25
 language = "English"     # language of folder and cluster names, e.g. "German"
+
+[classification]         # Jev (TypeSafe), used by classify and classify-mail
+model = "jev-latest"
+base_url = "https://api.typesafe.ai/v1"
+api_key_env = "TYPESAFE_API_KEY"
+min_probability = 0.5    # below this, a mail stays where it is
+timeout = 10             # seconds per request
+workers = 8              # parallel requests in classify

@@ -6,7 +6,7 @@ from typing import Any, ClassVar
 
 import pytest
 
-from taxonomail.sources import ImapSettings, read_imap, read_maildir
+from taxonomail.sources import ImapMailbox, ImapSettings, read_imap, read_maildir
 from tests.fakes import raw_mail
 
 
@@ -26,6 +26,8 @@ def test_maildir_reads_cur_and_new(tmp_path: Path) -> None:
 
 class FakeImap:
     instances: ClassVar[list["FakeImap"]] = []
+    capabilities: tuple[str, ...] = ("IMAP4REV1", "MOVE")
+    move_status = "OK"
 
     def __init__(self, host: str, port: int, ssl_context: ssl.SSLContext) -> None:
         assert ssl_context.check_hostname
@@ -47,13 +49,28 @@ class FakeImap:
         self.calls.append(("select", folder, readonly))
         return "OK", [b"3"]
 
+    def create(self, folder: str) -> tuple[str, list[bytes]]:
+        self.calls.append(("create", folder))
+        return "NO", [b"[ALREADYEXISTS] exists"]
+
+    def subscribe(self, folder: str) -> tuple[str, list[bytes]]:
+        self.calls.append(("subscribe", folder))
+        return "OK", [b""]
+
     def uid(self, command: str, *args: str) -> tuple[str, list[Any]]:
         self.calls.append(("uid", command, *args))
         if command == "SEARCH":
             return "OK", [b"1 2 3"]
+        if command == "MOVE":
+            return self.move_status, [b""]
         uids = args[0].split(",")
         return "OK", [
-            x for u in uids for x in ((b"%s (BODY[] {9}" % u.encode(), b"raw-" + u.encode()), b")")
+            x
+            for u in uids
+            for x in (
+                (b"%s (UID 1%s BODY[] {9}" % (u.encode(), u.encode()), b"raw-" + u.encode()),
+                b")",
+            )
         ]
 
 
@@ -73,7 +90,7 @@ def test_imap_reads_read_only_in_batches(monkeypatch: pytest.MonkeyPatch) -> Non
     assert ("select", '"My Box"', True) in imap.calls
     fetches = [c for c in imap.calls if c[:2] == ("uid", "FETCH")]
     assert [c[2] for c in fetches] == ["1,2", "3"]
-    assert all(c[3] == "(BODY.PEEK[])" for c in fetches)
+    assert all(c[3] == "(UID BODY.PEEK[])" for c in fetches)
     assert "pw" not in repr(settings)
 
 
@@ -115,3 +132,40 @@ def test_imap_rejects_bad_input_without_leaking(
     assert all(
         call[0] != "login" and call[0] != "select" for i in FakeImap.instances for call in i.calls
     )
+
+
+def test_mailbox_yields_uids_and_moves_into_created_folders(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings = settings_for("INBOX", monkeypatch)
+    with ImapMailbox(settings, readonly=False) as box:
+        messages = list(box.messages())
+        assert messages == [("11", b"raw-1"), ("12", b"raw-2"), ("13", b"raw-3")]
+        box.move("11", "Mobilität")
+        box.move("12", "Mobilität")
+    (imap,) = FakeImap.instances
+    assert ("select", '"INBOX"', False) in imap.calls
+    target = '"Mobilit&AOQ-t"'
+    assert [c for c in imap.calls if c[0] in {"create", "subscribe"}] == [
+        ("create", target),
+        ("subscribe", target),
+    ]
+    assert [c for c in imap.calls if c[:2] == ("uid", "MOVE")] == [
+        ("uid", "MOVE", "11", target),
+        ("uid", "MOVE", "12", target),
+    ]
+    assert imap.calls[-1] == ("logout",)
+
+
+def test_mailbox_refuses_to_move_without_server_support(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = settings_for("INBOX", monkeypatch)
+    monkeypatch.setattr(FakeImap, "capabilities", ("IMAP4REV1",))
+    with pytest.raises(RuntimeError, match="MOVE"), ImapMailbox(settings, readonly=False):
+        pass
+    assert FakeImap.instances[0].calls[-1] == ("logout",)
+
+
+def test_read_only_mailbox_never_moves(monkeypatch: pytest.MonkeyPatch) -> None:
+    with ImapMailbox(settings_for("INBOX", monkeypatch)) as box, pytest.raises(RuntimeError):
+        box.move("1", "X")
+    assert not [c for c in FakeImap.instances[0].calls if c[:2] == ("uid", "MOVE")]

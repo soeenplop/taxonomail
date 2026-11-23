@@ -4,8 +4,8 @@ Suggests a folder structure for your mailbox.
 
 taxonomail reads a Maildir or an IMAP folder, clusters the mails with
 [BERTopic](https://maartengr.github.io/BERTopic/), lets an LLM name the clusters and merge
-them into folders, and tells you which folder each mail belongs in. It only reads; it
-never moves or changes mail.
+them into folders, and tells you which folder each mail belongs in. `run` only reads;
+`classify --move` sorts mail into the folders (see [Sorting mail](#sorting-mail)).
 
 ## Usage
 
@@ -17,6 +17,58 @@ uv run taxonomail run --imap-host imap.example.org --imap-user me --out result  
 
 The result directory holds `taxonomy.yaml` (the folders), `assignments.jsonl` (the folder
 of each mail) and `clusters.json` (the clusters behind the folders).
+
+## Sorting mail
+
+Two commands sort mail into the folders of a finished run, with
+[Jev](https://typesafe.ai/) (TypeSafe System One). Jev answers a choice question: it gets
+the mail (sender domain, subject, first 1500 body characters) and every folder's name,
+description and cluster descriptions from the run, and returns one of the folder ids with a
+probability for each. It cannot return anything else, so a mail can't talk it into a new
+folder. A mail whose best folder is less likely than `min_probability` stays where it is.
+
+```sh
+# Existing mail: list the folder of each mail in result/classified.jsonl, then move it.
+uv run taxonomail classify --taxonomy result --imap-host imap.example.org --imap-user me
+uv run taxonomail classify --taxonomy result --imap-host imap.example.org --imap-user me --move
+
+# One new mail on stdin: prints the folder name (no newline) or nothing.
+uv run taxonomail classify-mail --taxonomy result < mail.eml
+```
+
+- `classify` reads a Maildir (list only) or an IMAP folder. With `--move` it creates the
+  folders it needs, subscribes to them and moves each mail with IMAP `MOVE`. A mail Jev
+  could not classify (after three retries) is listed with an error and left in place; a
+  rejected key stops the command.
+- Folders get the readable names from `taxonomy.yaml`; `/`, `.`, `\`, `%` and `*` become
+  `-` so a name never creates a subfolder. `--prefix "INBOX."` puts them under the inbox
+  (write the server's hierarchy separator yourself).
+- `classify-mail` never fails a delivery: on any error it prints nothing, writes the error
+  type to stderr and exits 0, so the mail lands in the inbox. It does not retry. Pass
+  `--env-file` with the key, since mail filters usually run without your environment.
+
+With Dovecot and Pigeonhole's
+[extprograms](https://doc.dovecot.org/main/core/plugins/sieve_extprograms.html) plugin
+(`sieve_execute_bin_dir` holds the wrapper script, `vnd.dovecot.execute` enabled):
+
+```sh
+#!/bin/sh
+# taxonomail-classify, in sieve_execute_bin_dir
+exec /path/to/taxonomail classify-mail --taxonomy /path/to/result --env-file /path/to/.env
+```
+
+```sieve
+require ["vnd.dovecot.execute", "fileinto", "mailbox", "variables"];
+if execute :pipe :output "folder" "taxonomail-classify" {
+  if not string :is "${folder}" "" {
+    fileinto :create "${folder}";
+  }
+}
+```
+
+Keep `[classification] timeout` below Dovecot's `sieve_execute_exec_timeout` (10 s by
+default). Jev runs in the United States: every classified mail, including every new one,
+is sent there.
 
 ## How it works
 
@@ -94,9 +146,9 @@ either per run with `--language German` or as `language` under `[taxonomy]` in t
 file. Folder ids stay lowercase ASCII slugs.
 
 Mail text (sender domain, subject, start of the body) is sent to the embedding service and,
-for a few mails per cluster, to the LLM. The LLM also gets each cluster's keywords and size,
-and the generated cluster names and descriptions. The output contains senders and subjects:
-keep it private.
+for a few mails per cluster, to the LLM; `classify` and `classify-mail` send it to Jev. The LLM also gets each cluster's keywords and size,
+and the generated cluster names and descriptions. The output, including `classified.jsonl`, contains
+senders and subjects: keep it private.
 
 ## Development
 

@@ -6,10 +6,14 @@ import json
 import re
 from collections.abc import Callable, Sequence
 from email.message import EmailMessage
+from pathlib import Path
 
 import numpy as np
+import yaml
 
+from taxonomail.classify import ClassifyError, Verdict
 from taxonomail.clustering import NOISE, Clusters, Vectors
+from taxonomail.mail import Mail
 
 TOPICS = ("invoices", "travel", "club")
 
@@ -87,3 +91,36 @@ class FakeLLM:
         ids = [int(i) for i in listed.group(1).split(",")]
         plan = self.plans.pop(0) if len(self.plans) > 1 else self.plans[0]
         return "```json\n" + json.dumps(plan(ids)) + "\n```"
+
+
+class FakeClassifier:
+    """Picks the folder named by the subject's first word; "unsure" mails get no folder."""
+
+    def __init__(self, fail_on: str = "") -> None:
+        self.fail_on = fail_on
+        self.seen: list[Mail] = []
+
+    def classify(self, mail: Mail) -> Verdict:
+        self.seen.append(mail)
+        topic = mail.subject.split(" ")[0] if mail.subject else ""
+        if self.fail_on and topic == self.fail_on:
+            raise ClassifyError("Jev answered HTTP 503")
+        if topic in TOPICS:
+            return Verdict(folder=topic, best=topic, probability=0.9)
+        return Verdict(folder=None, best=TOPICS[0], probability=0.3)
+
+
+def write_taxonomy(directory: Path) -> Path:
+    """A run's output for the three TOPICS, as ``taxonomail run`` writes it."""
+    directory.mkdir(parents=True, exist_ok=True)
+    folders = [
+        {"id": t, "name": f"{t.title()}/{t}", "description": f"All {t}.", "mails": 3}
+        for t in TOPICS
+    ]
+    (directory / "taxonomy.yaml").write_text(yaml.safe_dump({"folders": folders}), "utf-8")
+    clusters = [
+        {"cluster": i, "name": t, "description": f"{t} mails", "folder": t}
+        for i, t in enumerate(TOPICS)
+    ]
+    (directory / "clusters.json").write_text(json.dumps(clusters), "utf-8")
+    return directory
