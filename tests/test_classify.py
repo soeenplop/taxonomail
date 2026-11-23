@@ -198,3 +198,35 @@ def test_folder_path_drops_hierarchy_separators(
 def test_folder_path_rejects_line_breaks(run: Path) -> None:
     with pytest.raises(ValueError):
         folder_path(Category("a", "A", ""), "INBOX\r\n")
+
+
+@pytest.mark.parametrize(
+    "probabilities",
+    [{"travel": 1.0}, {"club": 1.5}, {"club": -0.1}, {"club": float("nan")}],
+)
+def test_choice_needs_a_valid_probability(probabilities: dict[str, float], run: Path) -> None:
+    content = json.dumps(
+        {"answers": {"folder": {"choice": "club", "probabilities": probabilities}}}
+    )
+    classifier, _ = make(
+        run,
+        httpx2.MockTransport(lambda r: httpx2.Response(200, text=content)),
+        min_probability=0,
+    )
+    with pytest.raises(ClassifyError):
+        classifier.classify(MAIL)
+
+
+def test_a_rejected_mail_is_not_fatal(run: Path) -> None:
+    statuses = iter([413, 200])
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        status = next(statuses)
+        return answer("club", {"club": 1.0}) if status == 200 else httpx2.Response(status)
+
+    classifier, sleeps = make(run, httpx2.MockTransport(handler), retries=3)
+    with pytest.raises(ClassifyError, match="HTTP 413") as info:
+        classifier.classify(MAIL)
+    assert not isinstance(info.value, FatalClassifyError)
+    assert classifier.classify(MAIL).folder == "club"
+    assert sleeps == []

@@ -12,6 +12,7 @@ import ssl
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 log = logging.getLogger(__name__)
 
@@ -77,7 +78,7 @@ class ImapMailbox:
                 raise RuntimeError("IMAP login failed") from None
             except UnicodeEncodeError:
                 raise RuntimeError("IMAP login failed (credentials must be ASCII)") from None
-            if not self._readonly and "MOVE" not in imap.capabilities:
+            if not self._readonly and "MOVE" not in _capabilities(imap):
                 raise RuntimeError("the IMAP server does not support MOVE")
             status, _ = imap.select(self._folder, readonly=self._readonly)
             if status != "OK":
@@ -110,11 +111,7 @@ class ImapMailbox:
             status, fetched = imap.uid("FETCH", chunk, "(UID BODY.PEEK[])")
             if status != "OK":
                 raise RuntimeError("IMAP fetch failed")
-            for item in fetched:
-                if isinstance(item, tuple) and len(item) == 2:
-                    match = re.search(rb"UID (\d+)", item[0])
-                    if match:
-                        yield match.group(1).decode(), item[1]
+            yield from _with_uids(fetched)
 
     def move(self, uid: str, folder: str) -> None:
         """Move one message to ``folder``, creating and subscribing the folder if needed."""
@@ -125,12 +122,48 @@ class ImapMailbox:
         imap = self._session
         target = _quote(folder)
         if target not in self._created:
-            imap.create(target)  # fails harmlessly when the folder exists
-            imap.subscribe(target)
+            imap.create(target)  # fails harmlessly when the folder exists; MOVE then checks
+            status, _ = imap.subscribe(target)
+            if status != "OK":
+                raise RuntimeError("IMAP subscribe failed")
             self._created.add(target)
         status, _ = imap.uid("MOVE", uid, target)
         if status != "OK":
             raise RuntimeError("IMAP move failed")
+
+
+def _capabilities(imap: imaplib.IMAP4_SSL) -> set[str]:
+    """Capabilities after login: servers may announce more than before it."""
+    status, data = imap.capability()
+    if status != "OK" or not data or not isinstance(data[-1], bytes):
+        return set()
+    return set(data[-1].decode("ascii", "replace").upper().split())
+
+
+_UID = re.compile(rb"\bUID (\d+)")
+
+
+def _with_uids(fetched: list[Any]) -> Iterator[tuple[str, bytes]]:
+    """Pair each FETCH body with its UID, which may come before or after the body literal."""
+    uid: str | None = None
+    body: bytes | None = None
+    for item in fetched:
+        if isinstance(item, tuple) and len(item) == 2:
+            if body is not None:
+                yield _require(uid), body
+            match = _UID.search(item[0])
+            uid, body = (match.group(1).decode() if match else None), item[1]
+        elif isinstance(item, bytes) and body is not None and uid is None:
+            match = _UID.search(item)
+            uid = match.group(1).decode() if match else None
+    if body is not None:
+        yield _require(uid), body
+
+
+def _require(uid: str | None) -> str:
+    if uid is None:
+        raise RuntimeError("IMAP server sent a message without its UID")
+    return uid
 
 
 def _utf7(name: str) -> str:

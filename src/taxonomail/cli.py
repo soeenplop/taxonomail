@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 import sys
+import tempfile
 from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
@@ -319,37 +320,76 @@ def classify(
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             done += len(chunk)
             typer.echo(f"classified {done} mails", err=True)
+            if all(isinstance(v, ClassifyError) for v in verdicts):
+                typer.echo(
+                    f"stopped: no mail of a batch could be classified ({verdicts[0]})", err=True
+                )
+                raise typer.Exit(1)
     for folder, count in counts.most_common():
         typer.echo(f"  {count:>6}  {folder}")
     typer.echo(f"written to {out}")
 
 
 def _private_file(path: Path) -> IO[str]:
-    """Open ``path`` for writing, readable only by the owner: it lists senders and subjects."""
+    """A new owner-only file that replaces ``path``: it lists senders and subjects.
+
+    Replacing the directory entry (instead of truncating) keeps the old file's readers on
+    the old file and never writes through a symlink.
+    """
     path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-    os.fchmod(fd, 0o600)
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        os.replace(temp, path)
+    except BaseException:
+        os.close(fd)
+        os.unlink(temp)
+        raise
     return os.fdopen(fd, "w", encoding="utf-8")
+
+
+def _read_stdin(limit: int) -> bytes | None:
+    """All of stdin (a mail filter must read to EOF); ``None`` when it exceeds ``limit``."""
+    kept = bytearray()
+    too_big = False
+    while chunk := sys.stdin.buffer.read(1 << 16):
+        if not too_big:
+            kept += chunk
+            if len(kept) > limit:
+                too_big = True
+                kept.clear()
+    return None if too_big else bytes(kept)
 
 
 @app.command("classify-mail")
 def classify_mail(
-    taxonomy: TaxonomyDir,
+    # Plain strings, not paths: Typer's path checks would exit 2 and fail the delivery.
+    taxonomy: Annotated[
+        str, typer.Option(help="Output directory of a run (taxonomy.yaml, clusters.json).")
+    ],
     prefix: Prefix = "",
-    config: ConfigFile = None,
-    env_file: EnvFile = None,
+    config: Annotated[
+        str | None, typer.Option(help="TOML settings file ([classification]).")
+    ] = None,
+    env_file: Annotated[
+        str | None,
+        typer.Option(help="Read keys from this .env file instead of searching for .env."),
+    ] = None,
 ) -> None:
     """Print the folder for one mail read from stdin, for a mail filter such as Sieve.
 
     Prints the folder name without a newline, or nothing when Jev is unsure. Never fails the
-    delivery: on any error it prints nothing, reports the error type on stderr and exits 0.
+    delivery: on any error it prints nothing, reports the error on stderr and exits 0.
+    It always reads stdin to the end; a mail over 50 MiB is not classified.
     """
     try:
-        _load_env(env_file)
-        settings = load_settings(config)
-        categories = load_taxonomy(taxonomy)
+        raw = _read_stdin(MAX_MAIL_BYTES)
+        if raw is None:
+            typer.echo("taxonomail: mail too large, not classified", err=True)
+            return
+        _load_env(None if env_file is None else Path(env_file))
+        settings = load_settings(None if config is None else Path(config))
+        categories = load_taxonomy(Path(taxonomy))
         paths = {c.id: folder_path(c, prefix) for c in categories}
-        raw = sys.stdin.buffer.read(MAX_MAIL_BYTES)
         verdict = make_classifier(settings.classification, categories, 0).classify(parse_mail(raw))
     except ClassifyError as exc:
         typer.echo(f"taxonomail: {exc}", err=True)

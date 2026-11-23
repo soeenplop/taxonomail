@@ -13,7 +13,7 @@ import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Annotated, Any, Protocol
 
 import httpx2
 import yaml
@@ -26,6 +26,8 @@ MAX_FOLDERS = 255
 """Most options a Jev Choice question accepts."""
 QUESTION = "Which folder of this person's mailbox does this mail belong in?"
 RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+FATAL_STATUS = {401, 402, 403, 404}
+"""Answers that every further request would get too: bad key, no credit, wrong URL."""
 
 
 class ClassifyError(Exception):
@@ -115,7 +117,7 @@ class Classifier(Protocol):
 class _Answer(BaseModel):
     model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
     choice: str
-    probabilities: dict[str, float]
+    probabilities: dict[str, Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]]
 
 
 def _criterion(category: Category) -> dict[str, Any]:
@@ -169,7 +171,7 @@ class JevClassifier:
             },
         }
         answer = _parse(self._post(body), self._ids)
-        probability = answer.probabilities.get(answer.choice, 0.0)
+        probability = answer.probabilities[answer.choice]
         folder = answer.choice if probability >= self._config.min_probability else None
         return Verdict(folder=folder, best=answer.choice, probability=probability)
 
@@ -187,8 +189,10 @@ class JevClassifier:
                 if last:
                     raise ClassifyError(f"Jev answered HTTP {response.status_code}")
             self._sleep(2**attempt)
-        if response.status_code >= 400:
+        if response.status_code in FATAL_STATUS:
             raise FatalClassifyError(f"Jev answered HTTP {response.status_code}")
+        if response.status_code >= 400:  # e.g. 413: this mail only
+            raise ClassifyError(f"Jev answered HTTP {response.status_code}")
         return response
 
 
@@ -199,4 +203,6 @@ def _parse(response: httpx2.Response, ids: set[str]) -> _Answer:
         raise ClassifyError("Jev sent an answer that is not valid") from None
     if answer.choice not in ids:
         raise ClassifyError("Jev chose a folder that is not in the taxonomy")
+    if answer.choice not in answer.probabilities:
+        raise ClassifyError("Jev sent no probability for its choice")
     return answer

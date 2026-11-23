@@ -26,8 +26,10 @@ def test_maildir_reads_cur_and_new(tmp_path: Path) -> None:
 
 class FakeImap:
     instances: ClassVar[list["FakeImap"]] = []
-    capabilities: tuple[str, ...] = ("IMAP4REV1", "MOVE")
+    after_login: tuple[str, ...] = ("IMAP4REV1", "MOVE")
     move_status = "OK"
+    subscribe_status = "OK"
+    uid_after_body = False
 
     def __init__(self, host: str, port: int, ssl_context: ssl.SSLContext) -> None:
         assert ssl_context.check_hostname
@@ -49,13 +51,17 @@ class FakeImap:
         self.calls.append(("select", folder, readonly))
         return "OK", [b"3"]
 
+    def capability(self) -> tuple[str, list[bytes]]:
+        self.calls.append(("capability",))
+        return "OK", [" ".join(self.after_login).encode()]
+
     def create(self, folder: str) -> tuple[str, list[bytes]]:
         self.calls.append(("create", folder))
         return "NO", [b"[ALREADYEXISTS] exists"]
 
     def subscribe(self, folder: str) -> tuple[str, list[bytes]]:
         self.calls.append(("subscribe", folder))
-        return "OK", [b""]
+        return self.subscribe_status, [b""]
 
     def uid(self, command: str, *args: str) -> tuple[str, list[Any]]:
         self.calls.append(("uid", command, *args))
@@ -64,11 +70,20 @@ class FakeImap:
         if command == "MOVE":
             return self.move_status, [b""]
         uids = args[0].split(",")
+        if self.uid_after_body:  # "* 1 FETCH (BODY[] {5}\r\nraw-1 UID 11)"
+            return "OK", [
+                x
+                for u in uids
+                for x in (
+                    (b"%s (BODY[] {5}" % u.encode(), b"raw-" + u.encode()),
+                    b" UID 1%s)" % u.encode(),
+                )
+            ]
         return "OK", [
             x
             for u in uids
             for x in (
-                (b"%s (UID 1%s BODY[] {9}" % (u.encode(), u.encode()), b"raw-" + u.encode()),
+                (b"%s (UID 1%s BODY[] {5}" % (u.encode(), u.encode()), b"raw-" + u.encode()),
                 b")",
             )
         ]
@@ -159,7 +174,7 @@ def test_mailbox_yields_uids_and_moves_into_created_folders(
 
 def test_mailbox_refuses_to_move_without_server_support(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = settings_for("INBOX", monkeypatch)
-    monkeypatch.setattr(FakeImap, "capabilities", ("IMAP4REV1",))
+    monkeypatch.setattr(FakeImap, "after_login", ("IMAP4REV1",))
     with pytest.raises(RuntimeError, match="MOVE"), ImapMailbox(settings, readonly=False):
         pass
     assert FakeImap.instances[0].calls[-1] == ("logout",)
@@ -168,4 +183,32 @@ def test_mailbox_refuses_to_move_without_server_support(monkeypatch: pytest.Monk
 def test_read_only_mailbox_never_moves(monkeypatch: pytest.MonkeyPatch) -> None:
     with ImapMailbox(settings_for("INBOX", monkeypatch)) as box, pytest.raises(RuntimeError):
         box.move("1", "X")
+    assert not [c for c in FakeImap.instances[0].calls if c[:2] == ("uid", "MOVE")]
+
+
+def test_uid_may_follow_the_body(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = settings_for("INBOX", monkeypatch)
+    monkeypatch.setattr(FakeImap, "uid_after_body", True)
+    with ImapMailbox(settings, readonly=False) as box:
+        messages = list(box.messages(batch=2))
+        box.move(messages[2][0], "X")
+    assert messages == [("11", b"raw-1"), ("12", b"raw-2"), ("13", b"raw-3")]
+    assert ("uid", "MOVE", "13", '"X"') in FakeImap.instances[0].calls
+
+
+def test_move_capability_is_read_after_login(monkeypatch: pytest.MonkeyPatch) -> None:
+    with ImapMailbox(settings_for("INBOX", monkeypatch), readonly=False):
+        pass
+    names = [c[0] for c in FakeImap.instances[0].calls]
+    assert names.index("capability") > names.index("login")
+
+
+def test_failed_subscribe_stops_before_moving(monkeypatch: pytest.MonkeyPatch) -> None:
+    settings = settings_for("INBOX", monkeypatch)
+    monkeypatch.setattr(FakeImap, "subscribe_status", "NO")
+    with (
+        ImapMailbox(settings, readonly=False) as box,
+        pytest.raises(RuntimeError, match="subscribe"),
+    ):
+        box.move("11", "X")
     assert not [c for c in FakeImap.instances[0].calls if c[:2] == ("uid", "MOVE")]

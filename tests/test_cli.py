@@ -1,5 +1,7 @@
+import io
 import json
 import os
+import sys
 from collections.abc import Iterator
 from pathlib import Path
 from typing import ClassVar, NoReturn
@@ -9,7 +11,7 @@ import yaml
 from typer.testing import CliRunner
 
 from taxonomail import cli
-from taxonomail.classify import FatalClassifyError
+from taxonomail.classify import ClassifyError, FatalClassifyError
 from tests.fakes import (
     TOPICS,
     FakeClassifier,
@@ -238,3 +240,83 @@ def test_classify_mail_reads_an_env_file(tmp_path: Path, monkeypatch: pytest.Mon
     assert result.stdout == "Club-club"
     assert seen == ["abc"]
     monkeypatch.delenv("JEV_TEST_KEY")
+
+
+def test_classify_stops_when_a_whole_batch_fails(
+    tmp_path: Path, classifier: FakeClassifier, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def failing(mail: object) -> NoReturn:
+        raise ClassifyError("Jev answered HTTP 400")
+
+    monkeypatch.setattr(classifier, "classify", failing)
+    run = write_taxonomy(tmp_path / "run")
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(topic_maildir(tmp_path))]
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 1
+    assert "HTTP 400" in result.output
+    assert len((run / "classified.jsonl").read_text().splitlines()) == 9
+
+
+def test_classify_replaces_an_old_list_instead_of_rewriting_it(
+    tmp_path: Path, classifier: FakeClassifier
+) -> None:
+    run = write_taxonomy(tmp_path / "run")
+    old = run / "classified.jsonl"
+    old.write_text("old\n")
+    old.chmod(0o644)
+    elsewhere = tmp_path / "elsewhere.txt"
+    elsewhere.write_text("keep\n")
+    link = tmp_path / "link.jsonl"
+    link.symlink_to(elsewhere)
+    box = topic_maildir(tmp_path)
+    with old.open() as reader:
+        result = runner.invoke(cli.app, ["classify", "--taxonomy", str(run), "--maildir", str(box)])
+        assert result.exit_code == 0, result.output
+        assert reader.read() == "old\n"
+    assert old.stat().st_mode & 0o777 == 0o600
+    assert len(old.read_text().splitlines()) == 9
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(box), "--out", str(link)]
+    assert runner.invoke(cli.app, args).exit_code == 0
+    assert elsewhere.read_text() == "keep\n"
+    assert not link.is_symlink()
+    assert not list(run.glob(".*.tmp")) and not list(tmp_path.glob(".*.tmp"))
+
+
+class Stdin:
+    """A stdin whose bytes are counted as they are read."""
+
+    def __init__(self, data: bytes) -> None:
+        self.buffer = io.BytesIO(data)
+
+    @property
+    def at_eof(self) -> bool:
+        return self.buffer.tell() == len(self.buffer.getvalue())
+
+
+@pytest.mark.parametrize("case", ["too-large", "bad-config", "taxonomy-is-a-file"])
+def test_classify_mail_reads_all_input_and_fails_open(
+    case: str, tmp_path: Path, classifier: FakeClassifier, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run = write_taxonomy(tmp_path / "run")
+    args = ["--taxonomy", str(run)]
+    mail = raw_mail("club", body="x" * 300_000)
+    if case == "too-large":
+        monkeypatch.setattr(cli, "MAX_MAIL_BYTES", 100_000)
+    elif case == "bad-config":
+        (tmp_path / "bad.toml").write_text("[nope]\n")
+        args += ["--config", str(tmp_path / "bad.toml")]
+    else:
+        args = ["--taxonomy", str(run / "taxonomy.yaml")]
+    stdin = Stdin(mail)
+    monkeypatch.setattr(sys, "stdin", stdin)
+    output = io.StringIO()
+    errors = io.StringIO()
+    monkeypatch.setattr(sys, "stdout", output)
+    monkeypatch.setattr(sys, "stderr", errors)
+    with pytest.raises(SystemExit) as info:
+        cli.app(["classify-mail", *args], prog_name="taxonomail")
+    assert info.value.code in (0, None)
+    assert output.getvalue() == ""
+    assert "taxonomail:" in errors.getvalue()
+    assert stdin.at_eof
+    assert not classifier.seen

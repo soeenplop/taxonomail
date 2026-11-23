@@ -38,13 +38,15 @@ uv run taxonomail classify-mail --taxonomy result < mail.eml
 
 - `classify` reads a Maildir (list only) or an IMAP folder. With `--move` it creates the
   folders it needs, subscribes to them and moves each mail with IMAP `MOVE`. A mail Jev
-  could not classify (after three retries) is listed with an error and left in place; a
-  rejected key stops the command.
+  could not classify (after three retries) is listed with an error and left in place. A
+  rejected key (HTTP 401/402/403), a wrong URL (404) or a batch of 100 mails that all fail
+  stops the command.
 - Folders get the readable names from `taxonomy.yaml`; `/`, `.`, `\`, `%` and `*` become
   `-` so a name never creates a subfolder. `--prefix "INBOX."` puts them under the inbox
   (write the server's hierarchy separator yourself).
 - `classify-mail` never fails a delivery: on any error it prints nothing, writes the error
-  type to stderr and exits 0, so the mail lands in the inbox. It does not retry. Pass
+  type to stderr and exits 0, so the mail lands in the inbox. It does not retry, always
+  reads the mail to the end and leaves mails over 50 MiB unclassified. Pass
   `--env-file` with the key, since mail filters usually run without your environment.
 
 With Dovecot and Pigeonhole's
