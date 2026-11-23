@@ -1,17 +1,33 @@
-"""Command line interface: ``taxonomail run``."""
+"""Command line interface: ``taxonomail run``, ``classify`` and ``classify-mail``."""
 
 from __future__ import annotations
 
+import json
 import os
+import sys
+import tempfile
 from collections import Counter
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
+from concurrent.futures import ThreadPoolExecutor
+from contextlib import ExitStack
+from itertools import batched, islice
 from pathlib import Path
-from typing import Annotated
+from typing import IO, Annotated
 
 import typer
 from dotenv import find_dotenv, load_dotenv
 from pydantic import ValidationError
 
+from taxonomail.classify import (
+    Category,
+    Classifier,
+    ClassifyError,
+    FatalClassifyError,
+    JevClassifier,
+    Verdict,
+    folder_paths,
+    load_taxonomy,
+)
 from taxonomail.clustering import (
     BERTopicClusterer,
     Clusterer,
@@ -19,6 +35,7 @@ from taxonomail.clustering import (
     OpenAIEmbedder,
 )
 from taxonomail.config import (
+    ClassificationConfig,
     ClusteringConfig,
     EmbeddingConfig,
     LLMConfig,
@@ -30,7 +47,7 @@ from taxonomail.llm import LLM, OpenAILLM
 from taxonomail.mail import Mail, parse_mail
 from taxonomail.output import write_result
 from taxonomail.pipeline import build_taxonomy
-from taxonomail.sources import ImapSettings, read_imap, read_maildir
+from taxonomail.sources import ImapMailbox, ImapSettings, read_imap, read_maildir
 
 app = typer.Typer(
     help="Discover a folder taxonomy for a mailbox with BERTopic and an LLM.",
@@ -43,6 +60,17 @@ app = typer.Typer(
 make_embedder: Callable[[EmbeddingConfig], Embedder] = OpenAIEmbedder
 make_clusterer: Callable[[ClusteringConfig], Clusterer] = BERTopicClusterer
 make_llm: Callable[[LLMConfig], LLM] = OpenAILLM
+
+
+def make_classifier(
+    config: ClassificationConfig, categories: list[Category], retries: int
+) -> Classifier:
+    return JevClassifier(config, categories, retries=retries)
+
+
+MAX_MAIL_BYTES = 50 * 1024 * 1024
+"""classify-mail reads at most this much of a mail from stdin."""
+BATCH = 100
 
 
 @app.callback()
@@ -60,6 +88,17 @@ def _with_language(settings: Settings, language: str) -> Settings:
             "--language must be a language name such as German", param_hint="--language"
         ) from None
     return settings.model_copy(update={"taxonomy": taxonomy})
+
+
+def _imap_settings(
+    host: str | None, user: str | None, password_env: str, port: int, folder: str
+) -> ImapSettings:
+    assert host is not None
+    if user is None:
+        raise typer.BadParameter("--imap-host needs --imap-user")
+    if password_env not in os.environ:
+        raise typer.BadParameter(f"set the IMAP password in ${password_env}")
+    return ImapSettings(host=host, user=user, password_env=password_env, port=port, folder=folder)
 
 
 def _load(raw_mails: Iterable[bytes], limit: int | None) -> list[Mail]:
@@ -111,19 +150,8 @@ def run(
     if maildir is not None:
         raw = read_maildir(maildir)
     else:
-        assert imap_host is not None
-        if imap_user is None:
-            raise typer.BadParameter("--imap-host needs --imap-user")
-        if imap_password_env not in os.environ:
-            raise typer.BadParameter(f"set the IMAP password in ${imap_password_env}")
         raw = read_imap(
-            ImapSettings(
-                host=imap_host,
-                user=imap_user,
-                password_env=imap_password_env,
-                port=imap_port,
-                folder=imap_folder,
-            )
+            _imap_settings(imap_host, imap_user, imap_password_env, imap_port, imap_folder)
         )
     mails = _load(raw, limit)
     typer.echo(f"read {len(mails)} mails")
@@ -147,3 +175,226 @@ def run(
     for folder in result.folders:
         typer.echo(f"  {folder.id:<30} {folder.size:>6}  {folder.name}")
     typer.echo(f"written to {out}")
+
+
+def _load_env(env_file: Path | None) -> None:
+    if env_file is None:
+        load_dotenv(find_dotenv(usecwd=True))
+    elif not load_dotenv(env_file):
+        raise typer.BadParameter("no settings in that file", param_hint="--env-file")
+
+
+def _taxonomy(directory: Path) -> list[Category]:
+    try:
+        return load_taxonomy(directory)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc), param_hint="--taxonomy") from None
+
+
+EnvFile = Annotated[
+    Path | None,
+    typer.Option(
+        help="Read keys from this .env file instead of searching for .env.", dir_okay=False
+    ),
+]
+TaxonomyDir = Annotated[
+    Path,
+    typer.Option(help="Output directory of a run (taxonomy.yaml, clusters.json).", file_okay=False),
+]
+Prefix = Annotated[
+    str,
+    typer.Option(
+        help='Put this before every folder name, separator included, e.g. "INBOX." '
+        "for folders under the inbox."
+    ),
+]
+ConfigFile = Annotated[
+    Path | None, typer.Option(help="TOML settings file ([classification]).", dir_okay=False)
+]
+
+
+@app.command()
+def classify(
+    taxonomy: TaxonomyDir,
+    maildir: Annotated[
+        Path | None, typer.Option(help="Classify the mail in this Maildir.", file_okay=False)
+    ] = None,
+    imap_host: Annotated[
+        str | None, typer.Option(help="Classify mail on this IMAP server.")
+    ] = None,
+    imap_user: Annotated[str | None, typer.Option(help="IMAP user name.")] = None,
+    imap_password_env: Annotated[
+        str, typer.Option(help="Environment variable that holds the IMAP password.")
+    ] = "IMAP_PASSWORD",
+    imap_port: Annotated[int, typer.Option(help="IMAP port.")] = 993,
+    imap_folder: Annotated[str, typer.Option(help="IMAP folder to classify.")] = "INBOX",
+    move: Annotated[
+        bool, typer.Option(help="Move each mail into its folder (IMAP only); creates folders.")
+    ] = False,
+    prefix: Prefix = "",
+    out: Annotated[
+        Path | None,
+        typer.Option(
+            help="Where to write the list; default classified.jsonl in --taxonomy.", dir_okay=False
+        ),
+    ] = None,
+    config: ConfigFile = None,
+    env_file: EnvFile = None,
+    limit: Annotated[
+        int | None, typer.Option(min=1, help="Classify at most this many mails.")
+    ] = None,
+) -> None:
+    """Sort existing mail into the folders of a run with Jev.
+
+    Writes the folder of every mail to classified.jsonl. Mails whose best folder is less
+    likely than [classification] min_probability stay where they are. Nothing moves
+    without --move.
+    """
+    _load_env(env_file)
+    settings = load_settings(config)
+    categories = _taxonomy(taxonomy)
+    if (maildir is None) == (imap_host is None):
+        raise typer.BadParameter("give either --maildir or --imap-host")
+    if move and maildir is not None:
+        raise typer.BadParameter("--move needs --imap-host", param_hint="--move")
+    try:
+        paths = folder_paths(categories, prefix)
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    try:
+        classifier = make_classifier(settings.classification, categories, 3)
+    except FatalClassifyError as exc:
+        raise typer.BadParameter(str(exc)) from None
+    out = out or taxonomy / "classified.jsonl"
+    counts: Counter[str] = Counter()
+    done = 0
+
+    def judge(mail: Mail) -> Verdict | ClassifyError:
+        try:
+            return classifier.classify(mail)
+        except FatalClassifyError:
+            raise
+        except ClassifyError as exc:
+            return exc
+
+    with ExitStack() as stack:
+        box: ImapMailbox | None = None
+        source: Iterator[tuple[str | None, bytes]]
+        if maildir is not None:
+            source = ((None, raw) for raw in read_maildir(maildir))
+        else:
+            imap = _imap_settings(imap_host, imap_user, imap_password_env, imap_port, imap_folder)
+            box = stack.enter_context(ImapMailbox(imap, readonly=not move))
+            source = box.messages(BATCH)
+        if limit is not None:
+            source = islice(source, limit)
+        handle = stack.enter_context(_private_file(out))
+        pool = stack.enter_context(ThreadPoolExecutor(settings.classification.workers))
+        for chunk in batched(source, BATCH):
+            mails = [parse_mail(raw) for _, raw in chunk]
+            try:
+                verdicts = list(pool.map(judge, mails))
+            except FatalClassifyError as exc:
+                typer.echo(f"stopped: {exc}", err=True)
+                raise typer.Exit(1) from None
+            for (uid, _), mail, verdict in zip(chunk, mails, verdicts, strict=True):
+                row: dict[str, object] = {
+                    "message_id": mail.id,
+                    "from": mail.sender,
+                    "subject": mail.subject,
+                }
+                if isinstance(verdict, ClassifyError):
+                    row |= {"folder": None, "error": str(verdict)}
+                    counts["(not classified: error)"] += 1
+                else:
+                    target = paths[verdict.folder] if verdict.folder else None
+                    row |= {
+                        "folder": target,
+                        "best": verdict.best,
+                        "probability": verdict.probability,
+                    }
+                    counts[target or "(stays: unsure)"] += 1
+                    if box is not None and move and uid is not None and target is not None:
+                        row["moved"] = True if box.move(uid, target) else "unconfirmed"
+                handle.write(json.dumps(row, ensure_ascii=False) + "\n")
+            done += len(chunk)
+            typer.echo(f"classified {done} mails", err=True)
+            if all(isinstance(v, ClassifyError) for v in verdicts):
+                typer.echo(
+                    f"stopped: no mail of a batch could be classified ({verdicts[0]})", err=True
+                )
+                raise typer.Exit(1)
+    for folder, count in counts.most_common():
+        typer.echo(f"  {count:>6}  {folder}")
+    typer.echo(f"written to {out}")
+
+
+def _private_file(path: Path) -> IO[str]:
+    """A new owner-only file that replaces ``path``: it lists senders and subjects.
+
+    Replacing the directory entry (instead of truncating) keeps the old file's readers on
+    the old file and never writes through a symlink.
+    """
+    path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    fd, temp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        os.replace(temp, path)
+    except BaseException:
+        os.close(fd)
+        os.unlink(temp)
+        raise
+    return os.fdopen(fd, "w", encoding="utf-8")
+
+
+def _read_stdin(limit: int) -> bytes | None:
+    """All of stdin (a mail filter must read to EOF); ``None`` when it exceeds ``limit``."""
+    kept = bytearray()
+    too_big = False
+    while chunk := sys.stdin.buffer.read(1 << 16):
+        if not too_big:
+            kept += chunk
+            if len(kept) > limit:
+                too_big = True
+                kept.clear()
+    return None if too_big else bytes(kept)
+
+
+@app.command("classify-mail")
+def classify_mail(
+    # Plain strings, not paths: Typer's path checks would exit 2 and fail the delivery.
+    taxonomy: Annotated[
+        str, typer.Option(help="Output directory of a run (taxonomy.yaml, clusters.json).")
+    ],
+    prefix: Prefix = "",
+    config: Annotated[
+        str | None, typer.Option(help="TOML settings file ([classification]).")
+    ] = None,
+    env_file: Annotated[
+        str | None,
+        typer.Option(help="Read keys from this .env file instead of searching for .env."),
+    ] = None,
+) -> None:
+    """Print the folder for one mail read from stdin, for a mail filter such as Sieve.
+
+    Prints the folder name without a newline, or nothing when Jev is unsure. Never fails the
+    delivery: on any error it prints nothing, reports the error on stderr and exits 0.
+    It always reads stdin to the end; a mail over 50 MiB is not classified.
+    """
+    try:
+        raw = _read_stdin(MAX_MAIL_BYTES)
+        if raw is None:
+            typer.echo("taxonomail: mail too large, not classified", err=True)
+            return
+        _load_env(None if env_file is None else Path(env_file))
+        settings = load_settings(None if config is None else Path(config))
+        categories = load_taxonomy(Path(taxonomy))
+        paths = folder_paths(categories, prefix)
+        verdict = make_classifier(settings.classification, categories, 0).classify(parse_mail(raw))
+    except ClassifyError as exc:
+        typer.echo(f"taxonomail: {exc}", err=True)
+        return
+    except Exception as exc:  # fail open: the mail is delivered to the inbox
+        typer.echo(f"taxonomail: {type(exc).__name__}", err=True)
+        return
+    if verdict.folder is not None:
+        typer.echo(paths[verdict.folder], nl=False)

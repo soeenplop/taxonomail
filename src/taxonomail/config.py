@@ -58,6 +58,22 @@ class EmbeddingConfig(_Section):
     batch_size: int = Field(default=64, ge=1)
 
 
+class ClassificationConfig(_Section):
+    """Jev (TypeSafe System One): picks one folder per mail for ``classify``."""
+
+    section: ClassVar[str] = "classification"
+    model: str = "jev-latest"
+    base_url: str = "https://api.typesafe.ai/v1"
+    api_key_env: str = Field(default="TYPESAFE_API_KEY", pattern=ENV_NAME, repr=False)
+    """Name of the environment variable that holds the key, never the key itself."""
+    min_probability: float = Field(default=0.5, ge=0, le=1)
+    """A mail whose best folder is less likely than this stays where it is."""
+    timeout: float = Field(default=10, gt=0)
+    """Seconds per request."""
+    workers: int = Field(default=8, ge=1, le=64)
+    """Parallel requests in ``classify``."""
+
+
 class ClusteringConfig(_Section):
     """BERTopic: UMAP and HDBSCAN settings."""
 
@@ -96,6 +112,7 @@ class Settings(_Section):
     embedding: EmbeddingConfig = EmbeddingConfig()
     clustering: ClusteringConfig = ClusteringConfig()
     taxonomy: TaxonomyConfig = TaxonomyConfig()
+    classification: ClassificationConfig = ClassificationConfig()
 
 
 def load_settings(path: Path | None) -> Settings:
