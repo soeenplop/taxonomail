@@ -106,9 +106,10 @@ class FakeClassifier:
     doubt (0.6) and anything else is relevant (0.05).
     """
 
-    def __init__(self, fail_on: str = "", relevance: bool = False) -> None:
+    def __init__(self, fail_on: str = "", relevance: bool = False, topics: bool = True) -> None:
         self.fail_on = fail_on
         self.relevance = relevance
+        self.topics = topics
         self.seen: list[Mail] = []
 
     def classify(self, mail: Mail) -> Verdict:
@@ -119,6 +120,8 @@ class FakeClassifier:
         stale = None
         if self.relevance:
             stale = 0.95 if "promo" in mail.subject else 0.6 if "maybe" in mail.subject else 0.05
+        if not self.topics:
+            return Verdict(folder=None, best=None, probability=None, stale=stale)
         if topic in TOPICS:
             return Verdict(folder=topic, best=topic, probability=0.9, stale=stale)
         return Verdict(folder=None, best=TOPICS[0], probability=0.3, stale=stale)

@@ -70,8 +70,9 @@ def make_classifier(
     categories: list[Category],
     retries: int,
     relevance: RelevanceConfig | None = None,
+    topics: bool = True,
 ) -> Classifier:
-    return JevClassifier(config, categories, retries=retries, relevance=relevance)
+    return JevClassifier(config, categories, retries=retries, relevance=relevance, topics=topics)
 
 
 STALE = "-stale"
@@ -296,7 +297,10 @@ def classify(
         raise typer.BadParameter(str(exc)) from None
     relevance = settings.relevance if stale_folder is not None else None
     try:
-        classifier = make_classifier(settings.classification, categories, 3, relevance)
+        # --only-stale never uses the topic, so its question (most of the tokens) is skipped.
+        classifier = make_classifier(
+            settings.classification, categories, 3, relevance, topics=not only_stale
+        )
     except FatalClassifyError as exc:
         raise typer.BadParameter(str(exc)) from None
     now = datetime.now(UTC)

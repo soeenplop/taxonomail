@@ -91,7 +91,9 @@ def classifier(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeClassifie
     monkeypatch.chdir(tmp_path)  # no .env from the checkout
     fake = FakeClassifier()
     monkeypatch.setattr(
-        cli, "make_classifier", lambda config, categories, retries, relevance=None: fake
+        cli,
+        "make_classifier",
+        lambda config, categories, retries, relevance=None, topics=True: fake,
     )
     return fake
 
@@ -233,7 +235,11 @@ def test_classify_mail_reads_an_env_file(tmp_path: Path, monkeypatch: pytest.Mon
     seen: list[str | None] = []
 
     def factory(
-        config: object, categories: object, retries: int, relevance: object = None
+        config: object,
+        categories: object,
+        retries: int,
+        relevance: object = None,
+        topics: bool = True,
     ) -> FakeClassifier:
         seen.append(os.environ.get("JEV_TEST_KEY"))
         assert retries == 0
@@ -363,7 +369,11 @@ def test_stale_folder_takes_old_mail_jev_is_sure_about(
     fake = FakeClassifier(relevance=True)
 
     def factory(
-        config: object, categories: object, retries: int, relevance: object = None
+        config: object,
+        categories: object,
+        retries: int,
+        relevance: object = None,
+        topics: bool = True,
     ) -> FakeClassifier:
         asked.append(relevance)
         return fake
@@ -415,9 +425,20 @@ def test_bad_stale_folder_is_rejected(
 def test_only_stale_moves_nothing_else(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.chdir(tmp_path)
     fake = FakeClassifier(relevance=True)
-    monkeypatch.setattr(
-        cli, "make_classifier", lambda config, categories, retries, relevance=None: fake
-    )
+    asked: list[bool] = []
+
+    def factory(
+        config: object,
+        categories: object,
+        retries: int,
+        relevance: object = None,
+        topics: bool = True,
+    ) -> FakeClassifier:
+        asked.append(topics)
+        fake.topics = topics
+        return fake
+
+    monkeypatch.setattr(cli, "make_classifier", factory)
     raws = [
         raw_mail("club promo", n=1, date=OLD),
         raw_mail("club news", n=2, date=OLD),
@@ -453,7 +474,8 @@ def test_only_stale_moves_nothing_else(tmp_path: Path, monkeypatch: pytest.Monke
     assert "(stays)" in result.output and "unsure" not in result.output
     rows = [json.loads(line) for line in (run / "classified.jsonl").read_text().splitlines()]
     assert [r["folder"] for r in rows] == ["Alt", None, None]
-    assert [r["best"] for r in rows] == ["club", "club", "travel"]
+    assert [r["best"] for r in rows] == [None, None, None]
+    assert asked == [False]  # only the relevance question is sent
 
 
 def test_only_stale_needs_a_stale_folder(tmp_path: Path, classifier: FakeClassifier) -> None:

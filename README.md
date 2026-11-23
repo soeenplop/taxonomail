@@ -60,8 +60,9 @@ only when all of these hold, so anything in doubt stays:
 - the mail's Date header is at least `min_age_days` (30) days old, and
 - the request succeeded.
 
-Add `--only-stale` to move nothing but that: every other mail stays where it is, and the
-topic folders are only listed in `classified.jsonl`, never created.
+Add `--only-stale` to move nothing but that: every other mail stays where it is and no
+topic folder is created. Jev is then asked only the relevance question, without the folder
+list, which makes each request several times smaller (and cheaper).
 
 The topic does not matter here: a mail that is surely stale is moved even when Jev is
 unsure about its topic folder. A mail whose Date header is missing, repeated or has no
