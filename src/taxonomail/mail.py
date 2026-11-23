@@ -142,10 +142,27 @@ _UNKNOWN_ORIGIN_UTC = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?\s+-0000\s*$")
 
 
 def _without_comments(value: str) -> str:
-    """``value`` with (possibly nested) parenthesized comments removed."""
-    while (stripped := re.sub(r"\([^()]*\)", " ", value)) != value:
-        value = stripped
-    return value
+    """``value`` with (possibly nested) parenthesized comments removed, in one pass."""
+    out: list[str] = []
+    depth = 0
+    escaped = False
+    for char in value:
+        if depth:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if not depth:
+                    out.append(" ")
+        elif char == "(":
+            depth = 1
+        else:
+            out.append(char)
+    return "".join(out)
 
 
 def _date(message: Message) -> datetime | None:

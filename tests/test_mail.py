@@ -101,3 +101,14 @@ def test_two_dates_mean_no_date() -> None:
         b"From: a@example.org\nSubject: s\n\nbody"
     )
     assert parse_mail(raw).date is None
+
+
+def test_deeply_nested_date_comment_is_fast() -> None:
+    date = "Mon, 1 Jan 2024 10:00:00 XYZ " + "(" * 50_000 + "-0000" + ")" * 50_000
+    raw = b"Date: " + date.encode() + b"\nFrom: a@example.org\nSubject: s\n\nbody"
+    assert parse_mail(raw).date is None
+
+
+def test_escaped_parenthesis_stays_inside_the_comment() -> None:
+    raw = b"Date: Mon, 1 Jan 2024 10:00:00 XYZ (a \\) 10:00 -0000)\nSubject: s\n\nbody"
+    assert parse_mail(raw).date is None
