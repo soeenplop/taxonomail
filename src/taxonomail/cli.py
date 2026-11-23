@@ -261,6 +261,14 @@ def classify(
             "are not to this folder (see [relevance])."
         ),
     ] = None,
+    min_age_days: Annotated[
+        int | None,
+        typer.Option(
+            min=0,
+            help="Only mails at least this many days old go to --stale-folder. "
+            "Overrides [relevance] min_age_days; the default is 90.",
+        ),
+    ] = None,
     only_stale: Annotated[
         bool,
         typer.Option(
@@ -295,6 +303,16 @@ def classify(
         paths = folder_paths(folders, prefix)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from None
+    if min_age_days is not None:
+        if stale_folder is None:
+            raise typer.BadParameter(
+                "--min-age-days needs --stale-folder", param_hint="--min-age-days"
+            )
+        settings = settings.model_copy(
+            update={
+                "relevance": settings.relevance.model_copy(update={"min_age_days": min_age_days})
+            }
+        )
     relevance = settings.relevance if stale_folder is not None else None
     try:
         # --only-stale never uses the topic, so its question (most of the tokens) is skipped.

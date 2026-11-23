@@ -4,7 +4,7 @@ import json
 import os
 import sys
 from collections.abc import Iterator
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar, NoReturn
 
@@ -482,5 +482,50 @@ def test_only_stale_needs_a_stale_folder(tmp_path: Path, classifier: FakeClassif
     run = write_taxonomy(tmp_path / "run")
     args = ["classify", "--taxonomy", str(run), "--maildir", str(topic_maildir(tmp_path))]
     result = runner.invoke(cli.app, [*args, "--only-stale"])
+    assert result.exit_code == 2
+    assert not classifier.seen
+
+
+@pytest.mark.parametrize(
+    ("days_ago", "option", "config", "moved"),
+    [
+        (60, None, None, False),  # default 90 days
+        (120, None, None, True),
+        (60, "30", None, True),  # option overrides the default
+        (60, None, 30, True),  # config overrides the default
+        (60, "100", 30, False),  # option overrides the config
+    ],
+)
+def test_min_age_days(
+    days_ago: int,
+    option: str | None,
+    config: int | None,
+    moved: bool,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    fake = FakeClassifier(relevance=True)
+    monkeypatch.setattr(cli, "make_classifier", lambda *args, **kwargs: fake)
+    date = email.utils.format_datetime(datetime.now(UTC) - timedelta(days=days_ago))
+    box = make_maildir(tmp_path / "box", 0)
+    (box / "cur" / "1").write_bytes(raw_mail("club promo", date=date))
+    run = write_taxonomy(tmp_path / "run")
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(box), "--stale-folder", "Alt"]
+    if option is not None:
+        args += ["--min-age-days", option]
+    if config is not None:
+        (tmp_path / "c.toml").write_text(f"[relevance]\nmin_age_days = {config}\n")
+        args += ["--config", str(tmp_path / "c.toml")]
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    row = json.loads((run / "classified.jsonl").read_text())
+    assert (row["folder"] == "Alt") is moved
+
+
+def test_min_age_days_needs_a_stale_folder(tmp_path: Path, classifier: FakeClassifier) -> None:
+    run = write_taxonomy(tmp_path / "run")
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(topic_maildir(tmp_path))]
+    result = runner.invoke(cli.app, [*args, "--min-age-days", "10"])
     assert result.exit_code == 2
     assert not classifier.seen

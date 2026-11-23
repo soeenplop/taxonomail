@@ -45,7 +45,7 @@ workers = 8              # parallel requests in classify
 
 [relevance]              # classify --stale-folder: old mail no longer worth keeping
 min_probability = 0.8    # how sure Jev must be; in doubt a mail stays
-min_age_days = 30        # younger mails are never moved there
+min_age_days = 90        # younger mails are never moved there (--min-age-days)
 # question = "Is this mail no longer worth keeping once it is a few weeks old?"
 # stale = "..."          # what a mail that is no longer relevant looks like
 # relevant = "..."       # what a mail worth keeping looks like
