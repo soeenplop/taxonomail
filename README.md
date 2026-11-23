@@ -39,10 +39,9 @@ uv run taxonomail classify-mail --taxonomy result < mail.eml
 - `classify` reads a Maildir (list only) or an IMAP folder. With `--move` it creates the
   folders it needs, subscribes to them and moves each mail with IMAP `MOVE`. A move counts
   as `"moved": true` only when the server confirms it (UIDPLUS `COPYUID`), otherwise
-  `"unconfirmed"`. A mail Jev
-  could not classify (after three retries) is listed with an error and left in place. A
-  rejected key (HTTP 401/402/403), a wrong URL (404) or a batch of 100 mails that all fail
-  stops the command.
+  `"unconfirmed"`. A mail Jev could not classify (after three retries) is listed with an
+  error and left in place. A rejected key (HTTP 401/402/403), a wrong URL (404) or a batch
+  of 100 mails that all fail stops the command.
 - Folders get the readable names from `taxonomy.yaml`; `/`, `.`, `\`, `%` and `*` become
   `-` so a name never creates a subfolder. `--prefix "INBOX."` puts them under the inbox
   (write the server's hierarchy separator yourself).
