@@ -1,8 +1,10 @@
+import email.utils
 import io
 import json
 import os
 import sys
 from collections.abc import Iterator
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import ClassVar, NoReturn
 
@@ -12,6 +14,7 @@ from typer.testing import CliRunner
 
 from taxonomail import cli
 from taxonomail.classify import ClassifyError, FatalClassifyError
+from taxonomail.config import RelevanceConfig
 from tests.fakes import (
     TOPICS,
     FakeClassifier,
@@ -87,7 +90,9 @@ def test_bad_language_is_rejected(tmp_path: Path, fakes: FakeLLM) -> None:
 def classifier(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> FakeClassifier:
     monkeypatch.chdir(tmp_path)  # no .env from the checkout
     fake = FakeClassifier()
-    monkeypatch.setattr(cli, "make_classifier", lambda config, categories, retries: fake)
+    monkeypatch.setattr(
+        cli, "make_classifier", lambda config, categories, retries, relevance=None: fake
+    )
     return fake
 
 
@@ -227,7 +232,9 @@ def test_classify_mail_reads_an_env_file(tmp_path: Path, monkeypatch: pytest.Mon
     monkeypatch.delenv("JEV_TEST_KEY", raising=False)
     seen: list[str | None] = []
 
-    def factory(config: object, categories: object, retries: int) -> FakeClassifier:
+    def factory(
+        config: object, categories: object, retries: int, relevance: object = None
+    ) -> FakeClassifier:
         seen.append(os.environ.get("JEV_TEST_KEY"))
         assert retries == 0
         return FakeClassifier()
@@ -342,4 +349,64 @@ def test_classify_refuses_folders_that_share_a_mailbox(
     result = runner.invoke(cli.app, args)
     assert result.exit_code == 2
     assert "same mailbox" in result.output
+    assert not classifier.seen
+
+
+OLD = "Mon, 01 Jan 2024 10:00:00 +0100"
+
+
+def test_stale_folder_takes_old_mail_jev_is_sure_about(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    asked: list[object] = []
+    fake = FakeClassifier(relevance=True)
+
+    def factory(
+        config: object, categories: object, retries: int, relevance: object = None
+    ) -> FakeClassifier:
+        asked.append(relevance)
+        return fake
+
+    monkeypatch.setattr(cli, "make_classifier", factory)
+    now = email.utils.format_datetime(datetime.now(UTC))
+    mails = [
+        ("club promo", OLD),  # old and surely stale: moves
+        ("hm promo", OLD),  # no topic folder, but surely stale: moves
+        ("club promo", now),  # stale but new: stays in its topic
+        ("club maybe", OLD),  # in doubt: topic
+        ("club news", OLD),  # relevant: topic
+        ("club promo", None),  # no date: topic
+    ]
+    box = make_maildir(tmp_path / "box", 0)
+    for i, (subject, date) in enumerate(mails):
+        (box / "cur" / str(i)).write_bytes(raw_mail(subject, n=i, date=date))
+    run = write_taxonomy(tmp_path / "run")
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(box)]
+    result = runner.invoke(cli.app, [*args, "--stale-folder", "Alt"])
+    assert result.exit_code == 0, result.output
+    rows = [json.loads(line) for line in (run / "classified.jsonl").read_text().splitlines()]
+    assert [r["folder"] for r in rows] == [
+        "Alt",
+        "Alt",
+        "Club-club",
+        "Club-club",
+        "Club-club",
+        "Club-club",
+    ]
+    assert [r["stale"] for r in rows] == [0.95, 0.95, 0.95, 0.6, 0.05, 0.95]
+    assert isinstance(asked[0], RelevanceConfig)
+    result = runner.invoke(cli.app, args)
+    assert result.exit_code == 0, result.output
+    assert asked[1] is None
+
+
+@pytest.mark.parametrize("name", ["", " / ", "club/Club"])
+def test_bad_stale_folder_is_rejected(
+    name: str, tmp_path: Path, classifier: FakeClassifier
+) -> None:
+    run = write_taxonomy(tmp_path / "run")
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(topic_maildir(tmp_path))]
+    result = runner.invoke(cli.app, [*args, "--stale-folder", name])
+    assert result.exit_code == 2
     assert not classifier.seen

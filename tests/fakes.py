@@ -19,10 +19,16 @@ TOPICS = ("invoices", "travel", "club")
 
 
 def raw_mail(
-    subject: str, sender: str = "shop@example.org", body: str = "Hello.", n: int = 0
+    subject: str,
+    sender: str = "shop@example.org",
+    body: str = "Hello.",
+    n: int = 0,
+    date: str | None = None,
 ) -> bytes:
     """A synthetic RFC 822 message."""
     message = EmailMessage()
+    if date is not None:
+        message["Date"] = date
     message["From"] = sender
     message["To"] = "me@example.net"
     message["Subject"] = subject
@@ -94,10 +100,15 @@ class FakeLLM:
 
 
 class FakeClassifier:
-    """Picks the folder named by the subject's first word; "unsure" mails get no folder."""
+    """Picks the folder named by the subject's first word; "unsure" mails get no folder.
 
-    def __init__(self, fail_on: str = "") -> None:
+    With ``relevance``, a subject containing "promo" is surely stale (0.95), "maybe" is in
+    doubt (0.6) and anything else is relevant (0.05).
+    """
+
+    def __init__(self, fail_on: str = "", relevance: bool = False) -> None:
         self.fail_on = fail_on
+        self.relevance = relevance
         self.seen: list[Mail] = []
 
     def classify(self, mail: Mail) -> Verdict:
@@ -105,9 +116,12 @@ class FakeClassifier:
         topic = mail.subject.split(" ")[0] if mail.subject else ""
         if self.fail_on and topic == self.fail_on:
             raise ClassifyError("Jev answered HTTP 503")
+        stale = None
+        if self.relevance:
+            stale = 0.95 if "promo" in mail.subject else 0.6 if "maybe" in mail.subject else 0.05
         if topic in TOPICS:
-            return Verdict(folder=topic, best=topic, probability=0.9)
-        return Verdict(folder=None, best=TOPICS[0], probability=0.3)
+            return Verdict(folder=topic, best=topic, probability=0.9, stale=stale)
+        return Verdict(folder=None, best=TOPICS[0], probability=0.3, stale=stale)
 
 
 def write_taxonomy(directory: Path) -> Path:

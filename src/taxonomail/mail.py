@@ -8,9 +8,10 @@ import email.policy
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
-from email.utils import parseaddr
+from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 
 BODY_CHARS = 1500
@@ -27,6 +28,8 @@ class Mail:
     sender_domain: str
     subject: str
     body: str
+    date: datetime | None = None
+    """From the Date header, in UTC; ``None`` when missing or unreadable."""
 
     def text(self) -> str:
         """The text that is embedded and shown to the LLM."""
@@ -134,6 +137,16 @@ def _address(value: str) -> str:
         return ""
 
 
+def _date(message: Message) -> datetime | None:
+    try:
+        parsed = parsedate_to_datetime(_header(message, "Date"))
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 def _fields(raw: bytes, message: Message, body: str) -> Mail:
     sender = _address(_header(message, "From"))
     message_id = _header(message, "Message-ID").strip()
@@ -143,6 +156,7 @@ def _fields(raw: bytes, message: Message, body: str) -> Mail:
         sender_domain=sender.rpartition("@")[2],
         subject=_squash(_header(message, "Subject")),
         body=body[:BODY_CHARS],
+        date=_date(message),
     )
 
 

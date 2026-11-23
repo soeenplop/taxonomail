@@ -1,3 +1,4 @@
+from datetime import UTC, datetime
 from email.message import EmailMessage
 
 import pytest
@@ -62,3 +63,16 @@ def test_forwarded_mail_and_nul_charset() -> None:
     assert parse_mail(forwarded).body == "Outer"
     nul = b'Subject: Hi\nContent-Type: text/plain; charset="utf\x00-8"\n\ncaf\xc3\xa9'
     assert parse_mail(nul).body == "café"
+
+
+@pytest.mark.parametrize(
+    ("date", "expected"),
+    [
+        ("Mon, 01 Jan 2024 10:00:00 +0100", datetime(2024, 1, 1, 9, tzinfo=UTC)),
+        ("Mon, 01 Jan 2024 10:00:00 -0000", datetime(2024, 1, 1, 10, tzinfo=UTC)),
+        ("not a date", None),
+        (None, None),
+    ],
+)
+def test_date_is_read_in_utc(date: str | None, expected: datetime | None) -> None:
+    assert parse_mail(raw_mail("s", date=date)).date == expected

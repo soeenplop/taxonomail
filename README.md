@@ -50,6 +50,23 @@ uv run taxonomail classify-mail --taxonomy result < mail.eml
   reads the mail to the end and leaves mails over 50 MiB unclassified. Pass
   `--env-file` with the key, since mail filters usually run without your environment.
 
+### Mail that is no longer relevant
+
+`classify --stale-folder "Archive"` asks Jev a second, yes/no question in the same request:
+is this mail no longer worth keeping? A mail goes to that folder instead of its topic folder
+only when all of these hold, so anything in doubt stays:
+
+- Jev's probability for "no longer worth keeping" is at least `min_probability` (0.8),
+- the mail's Date header is at least `min_age_days` (30) days old, and
+- the request succeeded.
+
+By default, no longer relevant means one-time and two-factor codes, login notifications,
+newsletters and promotions, payment notifications, beta/TestFlight notifications,
+registration confirmations and updated terms; invoices, contracts, tax and official mail,
+bookings, orders, credentials and personal mail are worth keeping. The question and both
+descriptions can be changed in the `[relevance]` section. `classify-mail` does not ask
+this question, since a newly delivered mail is never old.
+
 With Dovecot and Pigeonhole's
 [extprograms](https://doc.dovecot.org/main/core/plugins/sieve_extprograms.html) plugin
 (`sieve_execute_bin_dir` holds the wrapper script, `vnd.dovecot.execute` enabled):

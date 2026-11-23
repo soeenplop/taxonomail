@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from typing import Any
 
 import httpx2
 import pytest
@@ -13,7 +14,7 @@ from taxonomail.classify import (
     folder_paths,
     load_taxonomy,
 )
-from taxonomail.config import ClassificationConfig
+from taxonomail.config import ClassificationConfig, RelevanceConfig
 from taxonomail.mail import Mail
 from tests.fakes import TOPICS, write_taxonomy
 
@@ -44,7 +45,11 @@ def run(tmp_path: Path) -> Path:
 
 
 def make(
-    run: Path, handler: httpx2.MockTransport, retries: int = 0, **config: object
+    run: Path,
+    handler: httpx2.MockTransport,
+    retries: int = 0,
+    relevance: RelevanceConfig | None = None,
+    **config: object,
 ) -> tuple[JevClassifier, list[float]]:
     sleeps: list[float] = []
     classifier = JevClassifier(
@@ -54,6 +59,7 @@ def make(
         env={"TYPESAFE_API_KEY": KEY},
         transport=handler,
         sleep=sleeps.append,
+        relevance=relevance,
     )
     return classifier, sleeps
 
@@ -238,3 +244,49 @@ def test_folders_must_not_share_a_mailbox() -> None:
     with pytest.raises(ValueError, match="same mailbox"):
         folder_paths(categories)
     assert folder_paths(categories[:1], "INBOX.") == {"a": "INBOX.Bills-Receipts"}
+
+
+def test_relevance_is_a_second_question_in_the_same_request(run: Path) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        response = answer("club", {"club": 1.0})
+        data = json.loads(response.content)
+        data["answers"]["stale"] = {"type": "noul", "noul": 0.93}
+        return httpx2.Response(200, json=data)
+
+    relevance = RelevanceConfig()
+    classifier, _ = make(run, httpx2.MockTransport(handler), relevance=relevance)
+    assert classifier.classify(MAIL).stale == 0.93
+    question = bodies[0]["questions"]["stale"]
+    assert question == {
+        "type": "noul",
+        "instructions": relevance.question,
+        "criteria": {"true": relevance.stale, "false": relevance.relevant},
+    }
+
+
+def test_no_relevance_question_unless_asked(run: Path) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return answer("club", {"club": 1.0})
+
+    classifier, _ = make(run, httpx2.MockTransport(handler))
+    assert classifier.classify(MAIL).stale is None
+    assert list(bodies[0]["questions"]) == ["folder"]
+
+
+@pytest.mark.parametrize("stale", [None, {"noul": 1.2}, {"noul": "yes"}, {"type": "noul"}])
+def test_bad_relevance_answer_fails_the_mail(stale: object, run: Path) -> None:
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        data = json.loads(answer("club", {"club": 1.0}).content)
+        if stale is not None:
+            data["answers"]["stale"] = stale
+        return httpx2.Response(200, json=data)
+
+    classifier, _ = make(run, httpx2.MockTransport(handler), relevance=RelevanceConfig())
+    with pytest.raises(ClassifyError):
+        classifier.classify(MAIL)
