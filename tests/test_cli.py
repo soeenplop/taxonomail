@@ -410,3 +410,55 @@ def test_bad_stale_folder_is_rejected(
     result = runner.invoke(cli.app, [*args, "--stale-folder", name])
     assert result.exit_code == 2
     assert not classifier.seen
+
+
+def test_only_stale_moves_nothing_else(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    fake = FakeClassifier(relevance=True)
+    monkeypatch.setattr(
+        cli, "make_classifier", lambda config, categories, retries, relevance=None: fake
+    )
+    raws = [
+        raw_mail("club promo", n=1, date=OLD),
+        raw_mail("club news", n=2, date=OLD),
+        raw_mail("travel maybe", n=3, date=OLD),
+    ]
+
+    class Box:
+        moved: ClassVar[list[tuple[str, str]]] = []
+
+        def __init__(self, settings: object, readonly: bool) -> None:
+            pass
+
+        def __enter__(self) -> "Box":
+            return self
+
+        def __exit__(self, *exc: object) -> None:
+            pass
+
+        def messages(self, batch: int) -> Iterator[tuple[str, bytes]]:
+            yield from ((str(i + 1), raw) for i, raw in enumerate(raws))
+
+        def move(self, uid: str, folder: str) -> bool:
+            Box.moved.append((uid, folder))
+            return True
+
+    monkeypatch.setattr(cli, "ImapMailbox", Box)
+    monkeypatch.setenv("IMAP_PASSWORD", "pw")
+    run = write_taxonomy(tmp_path / "run")
+    args = ["classify", "--taxonomy", str(run), "--imap-host", "h", "--imap-user", "u", "--move"]
+    result = runner.invoke(cli.app, [*args, "--stale-folder", "Alt", "--only-stale"])
+    assert result.exit_code == 0, result.output
+    assert Box.moved == [("1", "Alt")]
+    assert "(stays)" in result.output and "unsure" not in result.output
+    rows = [json.loads(line) for line in (run / "classified.jsonl").read_text().splitlines()]
+    assert [r["folder"] for r in rows] == ["Alt", None, None]
+    assert [r["best"] for r in rows] == ["club", "club", "travel"]
+
+
+def test_only_stale_needs_a_stale_folder(tmp_path: Path, classifier: FakeClassifier) -> None:
+    run = write_taxonomy(tmp_path / "run")
+    args = ["classify", "--taxonomy", str(run), "--maildir", str(topic_maildir(tmp_path))]
+    result = runner.invoke(cli.app, [*args, "--only-stale"])
+    assert result.exit_code == 2
+    assert not classifier.seen

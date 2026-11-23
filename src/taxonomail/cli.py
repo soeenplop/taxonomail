@@ -260,6 +260,13 @@ def classify(
             "are not to this folder (see [relevance])."
         ),
     ] = None,
+    only_stale: Annotated[
+        bool,
+        typer.Option(
+            help="Only send mail to --stale-folder; every other mail stays where it is "
+            "(topic folders are listed, never created or used)."
+        ),
+    ] = False,
 ) -> None:
     """Sort existing mail into the folders of a run with Jev.
 
@@ -277,6 +284,8 @@ def classify(
     if move and maildir is not None:
         raise typer.BadParameter("--move needs --imap-host", param_hint="--move")
     folders = list(categories)
+    if only_stale and stale_folder is None:
+        raise typer.BadParameter("--only-stale needs --stale-folder", param_hint="--only-stale")
     if stale_folder is not None:
         if not folder_path(Category("", stale_folder, "")):
             raise typer.BadParameter("give a folder name", param_hint="--stale-folder")
@@ -334,6 +343,8 @@ def classify(
                     counts["(not classified: error)"] += 1
                 else:
                     target = paths[verdict.folder] if verdict.folder else None
+                    if only_stale:
+                        target = None
                     if relevance is not None and _is_stale(mail, verdict, relevance, now):
                         target = paths[STALE]
                     row |= {
@@ -343,7 +354,7 @@ def classify(
                     }
                     if verdict.stale is not None:
                         row["stale"] = verdict.stale
-                    counts[target or "(stays: unsure)"] += 1
+                    counts[target or ("(stays)" if only_stale else "(stays: unsure)")] += 1
                     if box is not None and move and uid is not None and target is not None:
                         row["moved"] = True if box.move(uid, target) else "unconfirmed"
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
