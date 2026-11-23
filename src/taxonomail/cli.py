@@ -10,7 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from itertools import batched, islice
 from pathlib import Path
 from typing import IO, Annotated
@@ -308,11 +308,10 @@ def classify(
             raise typer.BadParameter(
                 "--min-age-days needs --stale-folder", param_hint="--min-age-days"
             )
-        settings = settings.model_copy(
-            update={
-                "relevance": settings.relevance.model_copy(update={"min_age_days": min_age_days})
-            }
+        relevance_config = RelevanceConfig.model_validate(
+            {**settings.relevance.model_dump(), "min_age_days": min_age_days}
         )
+        settings = settings.model_copy(update={"relevance": relevance_config})
     relevance = settings.relevance if stale_folder is not None else None
     try:
         # --only-stale never uses the topic, so its question (most of the tokens) is skipped.
@@ -398,7 +397,7 @@ def _is_stale(mail: Mail, verdict: Verdict, relevance: RelevanceConfig, now: dat
         verdict.stale is not None
         and verdict.stale >= relevance.min_probability
         and mail.date is not None
-        and now - mail.date >= timedelta(days=relevance.min_age_days)
+        and (now - mail.date).days >= relevance.min_age_days
     )
 
 

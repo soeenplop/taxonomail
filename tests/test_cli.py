@@ -494,6 +494,7 @@ def test_only_stale_needs_a_stale_folder(tmp_path: Path, classifier: FakeClassif
         (60, "30", None, True),  # option overrides the default
         (60, None, 30, True),  # config overrides the default
         (60, "100", 30, False),  # option overrides the config
+        (60, "1000000000", None, False),  # huge threshold: no overflow, never stale
     ],
 )
 def test_min_age_days(
