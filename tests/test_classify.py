@@ -49,6 +49,7 @@ def make(
     handler: httpx2.MockTransport,
     retries: int = 0,
     relevance: RelevanceConfig | None = None,
+    topics: bool = True,
     **config: object,
 ) -> tuple[JevClassifier, list[float]]:
     sleeps: list[float] = []
@@ -60,6 +61,7 @@ def make(
         transport=handler,
         sleep=sleeps.append,
         relevance=relevance,
+        topics=topics,
     )
     return classifier, sleeps
 
@@ -293,3 +295,42 @@ def test_bad_relevance_answer_fails_the_mail(stale: object, run: Path) -> None:
     classifier, _ = make(run, httpx2.MockTransport(handler), relevance=RelevanceConfig())
     with pytest.raises(ClassifyError):
         classifier.classify(MAIL)
+
+
+def test_only_the_relevance_question_without_topics(run: Path) -> None:
+    bodies: list[dict[str, Any]] = []
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        bodies.append(json.loads(request.content))
+        return httpx2.Response(200, json={"answers": {"stale": {"type": "noul", "noul": 0.9}}})
+
+    classifier, _ = make(
+        run, httpx2.MockTransport(handler), relevance=RelevanceConfig(), topics=False
+    )
+    verdict = classifier.classify(MAIL)
+    assert (verdict.folder, verdict.best, verdict.probability, verdict.stale) == (
+        None,
+        None,
+        None,
+        0.9,
+    )
+    assert list(bodies[0]["questions"]) == ["stale"]
+    assert "club" not in json.dumps(bodies[0])
+
+
+def test_no_questions_at_all_is_refused(run: Path) -> None:
+    with pytest.raises(ValueError):
+        make(run, httpx2.MockTransport(lambda r: answer("club", {"club": 1.0})), topics=False)
+
+
+def test_overloaded_is_retried(run: Path) -> None:
+    statuses = iter([529, 200])
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if next(statuses) == 529:
+            return httpx2.Response(529)
+        return answer("club", {"club": 1.0})
+
+    classifier, sleeps = make(run, httpx2.MockTransport(handler), retries=3)
+    assert classifier.classify(MAIL).folder == "club"
+    assert sleeps == [1]

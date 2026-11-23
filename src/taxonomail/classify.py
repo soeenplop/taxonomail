@@ -25,7 +25,7 @@ from taxonomail.mail import Mail
 MAX_FOLDERS = 255
 """Most options a Jev Choice question accepts."""
 QUESTION = "Which folder of this person's mailbox does this mail belong in?"
-RETRY_STATUS = {408, 429, 500, 502, 503, 504}
+RETRY_STATUS = {408, 429, 500, 502, 503, 504, 529}  # 529: TypeSafe is overloaded
 FATAL_STATUS = {401, 402, 403, 404}
 """Answers that every further request would get too: bad key, no credit, wrong URL."""
 
@@ -110,11 +110,15 @@ def folder_paths(categories: list[Category], prefix: str = "") -> dict[str, str]
 
 @dataclass(frozen=True)
 class Verdict:
-    """The folder Jev picked, or ``None`` when its probability is below the threshold."""
+    """The folder Jev picked, or ``None`` when its probability is below the threshold.
+
+    Without the folder question (``topics=False``), ``folder``, ``best`` and ``probability``
+    are all ``None``.
+    """
 
     folder: str | None
-    best: str
-    probability: float
+    best: str | None
+    probability: float | None
     stale: float | None = None
     """Jev's probability that the mail is no longer worth keeping; ``None`` if not asked."""
 
@@ -141,7 +145,12 @@ def _criterion(category: Category) -> dict[str, Any]:
 
 
 class JevClassifier:
-    """Calls ``POST {base_url}/systemone`` with one Choice question per mail."""
+    """Calls ``POST {base_url}/systemone`` once per mail.
+
+    The request holds a Choice question for the folder and, with ``relevance``, a Noul
+    question for whether the mail is still worth keeping. ``topics=False`` leaves out the
+    folder question (most of each request's tokens) when only relevance is needed.
+    """
 
     def __init__(
         self,
@@ -153,7 +162,10 @@ class JevClassifier:
         transport: httpx2.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
         relevance: RelevanceConfig | None = None,
+        topics: bool = True,
     ) -> None:
+        if not topics and relevance is None:
+            raise ValueError("without the folder question, ask the relevance question")
         key = (os.environ if env is None else env).get(config.api_key_env)
         if not key:
             raise FatalClassifyError(
@@ -161,13 +173,13 @@ class JevClassifier:
             )
         self._config = config
         self._ids = {c.id for c in categories}
-        self._questions: dict[str, Any] = {
-            "folder": {
+        self._questions: dict[str, Any] = {}
+        if topics:
+            self._questions["folder"] = {
                 "type": "choice",
                 "instructions": QUESTION,
                 "criteria": {c.id: _criterion(c) for c in categories},
             }
-        }
         if relevance is not None:
             self._questions["stale"] = {
                 "type": "noul",
@@ -191,8 +203,10 @@ class JevClassifier:
         """Ask Jev for the folder of ``mail``."""
         body = {"model": self._config.model, "state": mail.text(), "questions": self._questions}
         answers = _answers(self._post(body))
-        answer = _choice(answers, self._ids)
         stale = _noul(answers, "stale") if "stale" in self._questions else None
+        if "folder" not in self._questions:
+            return Verdict(folder=None, best=None, probability=None, stale=stale)
+        answer = _choice(answers, self._ids)
         probability = answer.probabilities[answer.choice]
         folder = answer.choice if probability >= self._config.min_probability else None
         return Verdict(folder=folder, best=answer.choice, probability=probability, stale=stale)
