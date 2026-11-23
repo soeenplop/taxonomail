@@ -74,6 +74,38 @@ class ClassificationConfig(_Section):
     """Parallel requests in ``classify``."""
 
 
+class RelevanceConfig(_Section):
+    """When ``classify --stale-folder`` moves a mail that is no longer worth keeping."""
+
+    min_probability: float = Field(default=0.8, ge=0.5, le=1)
+    """How sure Jev must be that the mail is no longer relevant; in doubt it stays."""
+    min_age_days: int = Field(default=30, ge=0)
+    """Only mails at least this old (by their Date header) are moved."""
+    question: str = Field(
+        default="Is this mail no longer worth keeping once it is a few weeks old?", min_length=1
+    )
+    stale: str = Field(
+        default=(
+            "Short-lived or automated mail nobody needs to read again later: one-time and "
+            "two-factor codes, login and new-device notifications, newsletters, promotions "
+            "and ads, payment notifications from payment services such as PayPal, app beta "
+            "and TestFlight notifications, registration and e-mail confirmations, updated "
+            "terms of service or privacy policies."
+        ),
+        min_length=1,
+    )
+    """What a mail that is no longer relevant looks like."""
+    relevant: str = Field(
+        default=(
+            "Mail that may still matter later: invoices, contracts, tax and official "
+            "documents, bookings and tickets, orders and warranties, account statements, "
+            "access data or credentials sent to you, and mail written personally by a person."
+        ),
+        min_length=1,
+    )
+    """What a mail worth keeping looks like."""
+
+
 class ClusteringConfig(_Section):
     """BERTopic: UMAP and HDBSCAN settings."""
 
@@ -113,6 +145,7 @@ class Settings(_Section):
     clustering: ClusteringConfig = ClusteringConfig()
     taxonomy: TaxonomyConfig = TaxonomyConfig()
     classification: ClassificationConfig = ClassificationConfig()
+    relevance: RelevanceConfig = RelevanceConfig()
 
 
 def load_settings(path: Path | None) -> Settings:

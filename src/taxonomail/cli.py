@@ -10,6 +10,7 @@ from collections import Counter
 from collections.abc import Callable, Iterable, Iterator
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
+from datetime import UTC, datetime, timedelta
 from itertools import batched, islice
 from pathlib import Path
 from typing import IO, Annotated
@@ -25,6 +26,7 @@ from taxonomail.classify import (
     FatalClassifyError,
     JevClassifier,
     Verdict,
+    folder_path,
     folder_paths,
     load_taxonomy,
 )
@@ -39,6 +41,7 @@ from taxonomail.config import (
     ClusteringConfig,
     EmbeddingConfig,
     LLMConfig,
+    RelevanceConfig,
     Settings,
     TaxonomyConfig,
     load_settings,
@@ -63,9 +66,16 @@ make_llm: Callable[[LLMConfig], LLM] = OpenAILLM
 
 
 def make_classifier(
-    config: ClassificationConfig, categories: list[Category], retries: int
+    config: ClassificationConfig,
+    categories: list[Category],
+    retries: int,
+    relevance: RelevanceConfig | None = None,
 ) -> Classifier:
-    return JevClassifier(config, categories, retries=retries)
+    return JevClassifier(config, categories, retries=retries, relevance=relevance)
+
+
+STALE = "-stale"
+"""Key of the --stale-folder among the folder ids (no slug starts with "-")."""
 
 
 MAX_MAIL_BYTES = 50 * 1024 * 1024
@@ -243,12 +253,21 @@ def classify(
     limit: Annotated[
         int | None, typer.Option(min=1, help="Classify at most this many mails.")
     ] = None,
+    stale_folder: Annotated[
+        str | None,
+        typer.Option(
+            help="Also ask whether each mail is still worth keeping, and send old mails that "
+            "are not to this folder (see [relevance])."
+        ),
+    ] = None,
 ) -> None:
     """Sort existing mail into the folders of a run with Jev.
 
     Writes the folder of every mail to classified.jsonl. Mails whose best folder is less
-    likely than [classification] min_probability stay where they are. Nothing moves
-    without --move.
+    likely than [classification] min_probability stay where they are. With --stale-folder,
+    a mail at least [relevance] min_age_days old that Jev is sure (min_probability) is no
+    longer worth keeping goes to that folder instead, whatever its topic (a newsletter
+    without a clear topic is still a newsletter). Nothing moves without --move.
     """
     _load_env(env_file)
     settings = load_settings(config)
@@ -257,14 +276,21 @@ def classify(
         raise typer.BadParameter("give either --maildir or --imap-host")
     if move and maildir is not None:
         raise typer.BadParameter("--move needs --imap-host", param_hint="--move")
+    folders = list(categories)
+    if stale_folder is not None:
+        if not folder_path(Category("", stale_folder, "")):
+            raise typer.BadParameter("give a folder name", param_hint="--stale-folder")
+        folders.append(Category(STALE, stale_folder, ""))
     try:
-        paths = folder_paths(categories, prefix)
+        paths = folder_paths(folders, prefix)
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from None
+    relevance = settings.relevance if stale_folder is not None else None
     try:
-        classifier = make_classifier(settings.classification, categories, 3)
+        classifier = make_classifier(settings.classification, categories, 3, relevance)
     except FatalClassifyError as exc:
         raise typer.BadParameter(str(exc)) from None
+    now = datetime.now(UTC)
     out = out or taxonomy / "classified.jsonl"
     counts: Counter[str] = Counter()
     done = 0
@@ -308,11 +334,15 @@ def classify(
                     counts["(not classified: error)"] += 1
                 else:
                     target = paths[verdict.folder] if verdict.folder else None
+                    if relevance is not None and _is_stale(mail, verdict, relevance, now):
+                        target = paths[STALE]
                     row |= {
                         "folder": target,
                         "best": verdict.best,
                         "probability": verdict.probability,
                     }
+                    if verdict.stale is not None:
+                        row["stale"] = verdict.stale
                     counts[target or "(stays: unsure)"] += 1
                     if box is not None and move and uid is not None and target is not None:
                         row["moved"] = True if box.move(uid, target) else "unconfirmed"
@@ -327,6 +357,16 @@ def classify(
     for folder, count in counts.most_common():
         typer.echo(f"  {count:>6}  {folder}")
     typer.echo(f"written to {out}")
+
+
+def _is_stale(mail: Mail, verdict: Verdict, relevance: RelevanceConfig, now: datetime) -> bool:
+    """Old enough and surely no longer worth keeping; anything in doubt is kept."""
+    return (
+        verdict.stale is not None
+        and verdict.stale >= relevance.min_probability
+        and mail.date is not None
+        and now - mail.date >= timedelta(days=relevance.min_age_days)
+    )
 
 
 def _private_file(path: Path) -> IO[str]:

@@ -8,9 +8,10 @@ import email.policy
 import hashlib
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from email.header import decode_header, make_header
 from email.message import EmailMessage, Message
-from email.utils import parseaddr
+from email.utils import parseaddr, parsedate_to_datetime
 from html.parser import HTMLParser
 
 BODY_CHARS = 1500
@@ -27,6 +28,8 @@ class Mail:
     sender_domain: str
     subject: str
     body: str
+    date: datetime | None = None
+    """From the Date header, in UTC; ``None`` when missing or unreadable."""
 
     def text(self) -> str:
         """The text that is embedded and shown to the LLM."""
@@ -134,6 +137,52 @@ def _address(value: str) -> str:
         return ""
 
 
+_UNKNOWN_ORIGIN_UTC = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?\s+-0000\s*$")
+"""A date ending in the zone -0000 (UTC, origin unknown; RFC 5322 3.3), comments removed."""
+
+
+def _without_comments(value: str) -> str:
+    """``value`` with (possibly nested) parenthesized comments removed, in one pass."""
+    out: list[str] = []
+    depth = 0
+    escaped = False
+    for char in value:
+        if depth:
+            if escaped:
+                escaped = False
+            elif char == "\\":
+                escaped = True
+            elif char == "(":
+                depth += 1
+            elif char == ")":
+                depth -= 1
+                if not depth:
+                    out.append(" ")
+        elif char == "(":
+            depth = 1
+        else:
+            out.append(char)
+    return "".join(out)
+
+
+def _date(message: Message) -> datetime | None:
+    """The one Date header in UTC; ``None`` if missing, repeated or without a known zone."""
+    try:
+        # Raw values: the default policy would already have turned a missing zone into -0000.
+        values = [str(v) for k, v in message.raw_items() if k.lower() == "date"]
+        if len(values) != 1:
+            return None
+        parsed = parsedate_to_datetime(values[0])
+        if parsed.tzinfo is None:
+            # Python leaves a missing or unknown zone naive, and also -0000.
+            if not _UNKNOWN_ORIGIN_UTC.search(_without_comments(values[0])):
+                return None
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except Exception:  # malformed or out-of-range dates must never abort a run
+        return None
+
+
 def _fields(raw: bytes, message: Message, body: str) -> Mail:
     sender = _address(_header(message, "From"))
     message_id = _header(message, "Message-ID").strip()
@@ -143,6 +192,7 @@ def _fields(raw: bytes, message: Message, body: str) -> Mail:
         sender_domain=sender.rpartition("@")[2],
         subject=_squash(_header(message, "Subject")),
         body=body[:BODY_CHARS],
+        date=_date(message),
     )
 
 

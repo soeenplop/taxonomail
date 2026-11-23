@@ -19,7 +19,7 @@ import httpx2
 import yaml
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-from taxonomail.config import ClassificationConfig
+from taxonomail.config import ClassificationConfig, RelevanceConfig
 from taxonomail.mail import Mail
 
 MAX_FOLDERS = 255
@@ -115,6 +115,8 @@ class Verdict:
     folder: str | None
     best: str
     probability: float
+    stale: float | None = None
+    """Jev's probability that the mail is no longer worth keeping; ``None`` if not asked."""
 
 
 class Classifier(Protocol):
@@ -128,7 +130,7 @@ class Classifier(Protocol):
 class _Answer(BaseModel):
     model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
     choice: str
-    probabilities: dict[str, Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]]
+    probabilities: dict[str, Annotated[float, Field(ge=0, le=1, allow_inf_nan=False, strict=True)]]
 
 
 def _criterion(category: Category) -> dict[str, Any]:
@@ -150,6 +152,7 @@ class JevClassifier:
         env: Mapping[str, str] | None = None,
         transport: httpx2.BaseTransport | None = None,
         sleep: Callable[[float], None] = time.sleep,
+        relevance: RelevanceConfig | None = None,
     ) -> None:
         key = (os.environ if env is None else env).get(config.api_key_env)
         if not key:
@@ -158,7 +161,19 @@ class JevClassifier:
             )
         self._config = config
         self._ids = {c.id for c in categories}
-        self._criteria = {c.id: _criterion(c) for c in categories}
+        self._questions: dict[str, Any] = {
+            "folder": {
+                "type": "choice",
+                "instructions": QUESTION,
+                "criteria": {c.id: _criterion(c) for c in categories},
+            }
+        }
+        if relevance is not None:
+            self._questions["stale"] = {
+                "type": "noul",
+                "instructions": relevance.question,
+                "criteria": {"true": relevance.stale, "false": relevance.relevant},
+            }
         self._retries = retries
         self._sleep = sleep
         self._client = httpx2.Client(
@@ -174,17 +189,13 @@ class JevClassifier:
 
     def classify(self, mail: Mail) -> Verdict:
         """Ask Jev for the folder of ``mail``."""
-        body = {
-            "model": self._config.model,
-            "state": mail.text(),
-            "questions": {
-                "folder": {"type": "choice", "instructions": QUESTION, "criteria": self._criteria}
-            },
-        }
-        answer = _parse(self._post(body), self._ids)
+        body = {"model": self._config.model, "state": mail.text(), "questions": self._questions}
+        answers = _answers(self._post(body))
+        answer = _choice(answers, self._ids)
+        stale = _noul(answers, "stale") if "stale" in self._questions else None
         probability = answer.probabilities[answer.choice]
         folder = answer.choice if probability >= self._config.min_probability else None
-        return Verdict(folder=folder, best=answer.choice, probability=probability)
+        return Verdict(folder=folder, best=answer.choice, probability=probability, stale=stale)
 
     def _post(self, body: dict[str, Any]) -> httpx2.Response:
         for attempt in range(self._retries + 1):
@@ -207,9 +218,24 @@ class JevClassifier:
         return response
 
 
-def _parse(response: httpx2.Response, ids: set[str]) -> _Answer:
+class _Noul(BaseModel):
+    model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
+    noul: float = Field(ge=0, le=1, allow_inf_nan=False, strict=True)
+
+
+def _answers(response: httpx2.Response) -> dict[str, Any]:
     try:
-        answer = _Answer.model_validate(response.json()["answers"]["folder"])
+        answers = response.json()["answers"]
+    except (ValueError, KeyError, TypeError):
+        answers = None
+    if not isinstance(answers, dict):
+        raise ClassifyError("Jev sent an answer that is not valid")
+    return answers
+
+
+def _choice(answers: dict[str, Any], ids: set[str]) -> _Answer:
+    try:
+        answer = _Answer.model_validate(answers["folder"])
     except (ValueError, KeyError, TypeError):
         raise ClassifyError("Jev sent an answer that is not valid") from None
     if answer.choice not in ids:
@@ -217,3 +243,10 @@ def _parse(response: httpx2.Response, ids: set[str]) -> _Answer:
     if answer.choice not in answer.probabilities:
         raise ClassifyError("Jev sent no probability for its choice")
     return answer
+
+
+def _noul(answers: dict[str, Any], question: str) -> float:
+    try:
+        return _Noul.model_validate(answers[question]).noul
+    except (ValueError, KeyError, TypeError):
+        raise ClassifyError("Jev sent an answer that is not valid") from None
