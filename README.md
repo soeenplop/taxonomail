@@ -57,7 +57,7 @@ is this mail no longer worth keeping? A mail goes to that folder instead of its 
 only when all of these hold, so anything in doubt stays:
 
 - Jev's probability for "no longer worth keeping" is at least `min_probability` (0.8),
-- the mail's Date header is at least `min_age_days` (30) days old, and
+- the mail's Date header is at least `min_age_days` (90) days old (or `--min-age-days`), and
 - the request succeeded.
 
 Add `--only-stale` to move nothing but that: every other mail stays where it is and no

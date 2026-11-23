@@ -79,7 +79,7 @@ class RelevanceConfig(_Section):
 
     min_probability: float = Field(default=0.8, ge=0.5, le=1)
     """How sure Jev must be that the mail is no longer relevant; in doubt it stays."""
-    min_age_days: int = Field(default=30, ge=0)
+    min_age_days: int = Field(default=90, ge=0)
     """Only mails at least this old (by their Date header) are moved."""
     question: str = Field(
         default="Is this mail no longer worth keeping once it is a few weeks old?", min_length=1
