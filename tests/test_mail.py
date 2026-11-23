@@ -76,6 +76,12 @@ def test_forwarded_mail_and_nul_charset() -> None:
         ("Mon, 01 Jan 2024 10:00:00 CET", None),
         ("Mon, 01 Jan 2024 10:00:00 XYZ", None),
         ("Mon, 1 Jan 2024 10:00:00 XYZ (-0000)", None),
+        ("Mon, 1 Jan 2024 10:00:00 XYZ (local time 09:00 -0000 at origin)", None),
+        ("Mon, 1 Jan 2024 10:00:00 (a (b) 10:00 -0000) XYZ", None),
+        (
+            "Mon, 1 Jan 2024 10:00:00 -0000 (a (nested) comment)",
+            datetime(2024, 1, 1, 10, tzinfo=UTC),
+        ),
         ("Mon, 1 Jan 2024 10:00 -0000 (unknown)", datetime(2024, 1, 1, 10, tzinfo=UTC)),
         ("31 Dec 9999 23:59:59 -0100", None),
         ("not a date", None),

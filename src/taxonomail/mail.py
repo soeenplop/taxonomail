@@ -137,8 +137,15 @@ def _address(value: str) -> str:
         return ""
 
 
-_UNKNOWN_ORIGIN_UTC = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?\s+-0000(?:\s|\(|$)")
-"""A time followed directly by the zone -0000 (UTC, origin unknown; RFC 5322 3.3)."""
+_UNKNOWN_ORIGIN_UTC = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?\s+-0000\s*$")
+"""A date ending in the zone -0000 (UTC, origin unknown; RFC 5322 3.3), comments removed."""
+
+
+def _without_comments(value: str) -> str:
+    """``value`` with (possibly nested) parenthesized comments removed."""
+    while (stripped := re.sub(r"\([^()]*\)", " ", value)) != value:
+        value = stripped
+    return value
 
 
 def _date(message: Message) -> datetime | None:
@@ -151,7 +158,7 @@ def _date(message: Message) -> datetime | None:
         parsed = parsedate_to_datetime(values[0])
         if parsed.tzinfo is None:
             # Python leaves a missing or unknown zone naive, and also -0000.
-            if not _UNKNOWN_ORIGIN_UTC.search(values[0]):
+            if not _UNKNOWN_ORIGIN_UTC.search(_without_comments(values[0])):
                 return None
             parsed = parsed.replace(tzinfo=UTC)
         return parsed.astimezone(UTC)
