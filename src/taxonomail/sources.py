@@ -114,8 +114,13 @@ class ImapMailbox:
                 raise RuntimeError("IMAP fetch failed")
             yield from _with_uids(fetched)
 
-    def move(self, uid: str, folder: str) -> None:
-        """Move one message to ``folder``, creating and subscribing the folder if needed."""
+    def move(self, uid: str, folder: str) -> bool:
+        """Move one message to ``folder``, creating and subscribing the folder if needed.
+
+        Returns whether the server confirmed this UID with a ``COPYUID`` response (UIDPLUS);
+        ``False`` means the move was not confirmed, e.g. because another client removed the
+        message in the meantime.
+        """
         if self._readonly:
             raise RuntimeError("IMAP mailbox is read-only")
         if not uid.isdigit():
@@ -128,9 +133,28 @@ class ImapMailbox:
             if status != "OK":
                 raise RuntimeError("IMAP subscribe failed")
             self._created.add(target)
+        imap.response("COPYUID")  # drop codes left over from earlier commands
         status, _ = imap.uid("MOVE", uid, target)
         if status != "OK":
             raise RuntimeError("IMAP move failed")
+        _, codes = imap.response("COPYUID")
+        return any(_copyuid_has(code, int(uid)) for code in codes if isinstance(code, bytes))
+
+
+def _copyuid_has(code: bytes, uid: int) -> bool:
+    """Whether a ``COPYUID <validity> <source set> <dest set>`` code names ``uid`` as source."""
+    parts = code.split()
+    if len(parts) != 3:
+        return False
+    for item in parts[1].split(b","):
+        low, _, high = item.partition(b":")
+        try:
+            bounds = sorted((int(low), int(high or low)))
+        except ValueError:
+            continue
+        if bounds[0] <= uid <= bounds[1]:
+            return True
+    return False
 
 
 def _capabilities(imap: imaplib.IMAP4_SSL) -> set[str]:

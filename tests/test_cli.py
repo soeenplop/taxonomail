@@ -146,8 +146,9 @@ def test_classify_moves_over_imap(
         def messages(self, batch: int) -> Iterator[tuple[str, bytes]]:
             yield from ((str(i + 1), raw) for i, raw in enumerate(raws))
 
-        def move(self, uid: str, folder: str) -> None:
+        def move(self, uid: str, folder: str) -> bool:
             Box.moved.append((uid, folder))
+            return uid != "3"  # another client took mail 3 away
 
     monkeypatch.setattr(cli, "ImapMailbox", Box)
     monkeypatch.setenv("IMAP_PASSWORD", "pw")
@@ -161,7 +162,7 @@ def test_classify_moves_over_imap(
         ("3", "INBOX.Club-club"),
     ]
     rows = [json.loads(line) for line in (run / "classified.jsonl").read_text().splitlines()]
-    assert [r.get("moved", False) for r in rows] == [True, True, True, False]
+    assert [r.get("moved", False) for r in rows] == [True, True, "unconfirmed", False]
 
 
 def test_classify_refuses_to_move_a_maildir(tmp_path: Path, classifier: FakeClassifier) -> None:

@@ -315,8 +315,7 @@ def classify(
                     }
                     counts[target or "(stays: unsure)"] += 1
                     if box is not None and move and uid is not None and target is not None:
-                        box.move(uid, target)
-                        row["moved"] = True
+                        row["moved"] = True if box.move(uid, target) else "unconfirmed"
                 handle.write(json.dumps(row, ensure_ascii=False) + "\n")
             done += len(chunk)
             typer.echo(f"classified {done} mails", err=True)

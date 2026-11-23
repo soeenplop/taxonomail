@@ -36,6 +36,8 @@ class FakeImap:
     move_status = "OK"
     subscribe_status = "OK"
     uid_after_body = False
+    copyuid: ClassVar[dict[str, bytes]] = {}
+    pending: bytes | None = None
 
     def __init__(self, host: str, port: int, ssl_context: ssl.SSLContext) -> None:
         assert ssl_context.check_hostname
@@ -57,6 +59,11 @@ class FakeImap:
         self.calls.append(("select", folder, readonly))
         return "OK", [b"3"]
 
+    def response(self, code: str) -> tuple[str, list[bytes | None]]:
+        assert code == "COPYUID"
+        pending, self.pending = self.pending, None
+        return code, [pending]
+
     def capability(self) -> tuple[str, list[bytes]]:
         self.calls.append(("capability",))
         return "OK", [" ".join(self.after_login).encode()]
@@ -74,7 +81,8 @@ class FakeImap:
         if command == "SEARCH":
             return "OK", [b"1 2 3"]
         if command == "MOVE":
-            return self.move_status, [b""]
+            self.pending = self.copyuid.get(args[0], b"1 %s 5" % args[0].encode())
+            return self.move_status, [None]
         uids = args[0].split(",")
         if self.uid_after_body:  # "* 1 FETCH (BODY[] {5}\r\nraw-1 UID 11)"
             return "OK", [
@@ -162,8 +170,8 @@ def test_mailbox_yields_uids_and_moves_into_created_folders(
     with ImapMailbox(settings, readonly=False) as box:
         messages = list(box.messages())
         assert messages == [("11", b"raw-1"), ("12", b"raw-2"), ("13", b"raw-3")]
-        box.move("11", "Mobilität")
-        box.move("12", "Mobilität")
+        assert box.move("11", "Mobilität")
+        assert box.move("12", "Mobilität")
     (imap,) = FakeImap.instances
     assert ("select", '"INBOX"', False) in imap.calls
     target = '"Mobilit&AOQ-t"'
@@ -247,3 +255,16 @@ def test_a_body_never_borrows_a_later_uid() -> None:
     fetched = [(b"1 (BODY[] {5}", b"raw-1"), b")", b"9 (UID 42 FLAGS (\\Seen))"]
     with pytest.raises(RuntimeError, match="without its UID"):
         list(_with_uids(fetched))
+
+
+@pytest.mark.parametrize(
+    ("code", "confirmed"),
+    [(b"7 10:12 20:22", True), (b"7 12,11 5,6", True), (b"7 12 5", False), (b"", False)],
+)
+def test_move_is_confirmed_only_by_copyuid(
+    code: bytes, confirmed: bool, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    settings = settings_for("INBOX", monkeypatch)
+    monkeypatch.setattr(FakeImap, "copyuid", {"11": code})
+    with ImapMailbox(settings, readonly=False) as box:
+        assert box.move("11", "X") is confirmed
