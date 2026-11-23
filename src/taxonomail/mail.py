@@ -137,6 +137,10 @@ def _address(value: str) -> str:
         return ""
 
 
+_UNKNOWN_ORIGIN_UTC = re.compile(r"\d{1,2}:\d{2}(?::\d{2})?\s+-0000(?:\s|\(|$)")
+"""A time followed directly by the zone -0000 (UTC, origin unknown; RFC 5322 3.3)."""
+
+
 def _date(message: Message) -> datetime | None:
     """The one Date header in UTC; ``None`` if missing, repeated or without a known zone."""
     try:
@@ -145,14 +149,14 @@ def _date(message: Message) -> datetime | None:
         if len(values) != 1:
             return None
         parsed = parsedate_to_datetime(values[0])
-    except Exception:  # malformed headers must never abort a run
+        if parsed.tzinfo is None:
+            # Python leaves a missing or unknown zone naive, and also -0000.
+            if not _UNKNOWN_ORIGIN_UTC.search(values[0]):
+                return None
+            parsed = parsed.replace(tzinfo=UTC)
+        return parsed.astimezone(UTC)
+    except Exception:  # malformed or out-of-range dates must never abort a run
         return None
-    if parsed.tzinfo is None:
-        # Python leaves a missing or unknown zone naive, and also "-0000" (UTC, origin unknown).
-        if not re.search(r"(?<![\d:])-0000\b", values[0]):
-            return None
-        parsed = parsed.replace(tzinfo=UTC)
-    return parsed.astimezone(UTC)
 
 
 def _fields(raw: bytes, message: Message, body: str) -> Mail:
