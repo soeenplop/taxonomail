@@ -140,11 +140,16 @@ def _capabilities(imap: imaplib.IMAP4_SSL) -> set[str]:
     return set(data[-1].decode("ascii", "replace").upper().split())
 
 
-_UID = re.compile(rb"\bUID (\d+)")
+_UID = re.compile(rb"\bUID (\d+)", re.IGNORECASE)
 
 
 def _with_uids(fetched: list[Any]) -> Iterator[tuple[str, bytes]]:
-    """Pair each FETCH body with its UID, which may come before or after the body literal."""
+    """Pair each FETCH body with its UID, which may come before or after the body literal.
+
+    imaplib returns a body as ``(head, literal)`` followed by the rest of the same response
+    (``b")"`` or ``b" UID 11)"``). The body is complete at that trailer, so a later response
+    (an unsolicited FLAGS update, say) can never lend it another message's UID.
+    """
     uid: str | None = None
     body: bytes | None = None
     for item in fetched:
@@ -153,9 +158,12 @@ def _with_uids(fetched: list[Any]) -> Iterator[tuple[str, bytes]]:
                 yield _require(uid), body
             match = _UID.search(item[0])
             uid, body = (match.group(1).decode() if match else None), item[1]
-        elif isinstance(item, bytes) and body is not None and uid is None:
-            match = _UID.search(item)
-            uid = match.group(1).decode() if match else None
+        elif isinstance(item, bytes) and body is not None:
+            if uid is None:
+                match = _UID.search(item)
+                uid = match.group(1).decode() if match else None
+            yield _require(uid), body
+            uid, body = None, None
     if body is not None:
         yield _require(uid), body
 

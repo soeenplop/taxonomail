@@ -6,7 +6,13 @@ from typing import Any, ClassVar
 
 import pytest
 
-from taxonomail.sources import ImapMailbox, ImapSettings, read_imap, read_maildir
+from taxonomail.sources import (
+    ImapMailbox,
+    ImapSettings,
+    _with_uids,
+    read_imap,
+    read_maildir,
+)
 from tests.fakes import raw_mail
 
 
@@ -212,3 +218,24 @@ def test_failed_subscribe_stops_before_moving(monkeypatch: pytest.MonkeyPatch) -
     ):
         box.move("11", "X")
     assert not [c for c in FakeImap.instances[0].calls if c[:2] == ("uid", "MOVE")]
+
+
+@pytest.mark.parametrize(
+    ("fetched", "expected"),
+    [
+        ([(b"1 (uid 11 BODY[] {5}", b"raw-1"), b")"], [("11", b"raw-1")]),
+        ([(b"1 (BODY[] {5}", b"raw-1"), b" uid 11)"], [("11", b"raw-1")]),
+        (
+            [(b"1 (UID 11 BODY[] {5}", b"raw-1"), b")", b"9 (UID 42 FLAGS (\\Seen))"],
+            [("11", b"raw-1")],
+        ),
+    ],
+)
+def test_fetch_parsing(fetched: list[Any], expected: list[tuple[str, bytes]]) -> None:
+    assert list(_with_uids(fetched)) == expected
+
+
+def test_a_body_never_borrows_a_later_uid() -> None:
+    fetched = [(b"1 (BODY[] {5}", b"raw-1"), b")", b"9 (UID 42 FLAGS (\\Seen))"]
+    with pytest.raises(RuntimeError, match="without its UID"):
+        list(_with_uids(fetched))
