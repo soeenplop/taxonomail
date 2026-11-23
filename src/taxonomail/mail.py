@@ -138,11 +138,19 @@ def _address(value: str) -> str:
 
 
 def _date(message: Message) -> datetime | None:
+    """The one Date header in UTC; ``None`` if missing, repeated or without a known zone."""
     try:
-        parsed = parsedate_to_datetime(_header(message, "Date"))
-    except (TypeError, ValueError, IndexError, OverflowError):
+        # Raw values: the default policy would already have turned a missing zone into -0000.
+        values = [str(v) for k, v in message.raw_items() if k.lower() == "date"]
+        if len(values) != 1:
+            return None
+        parsed = parsedate_to_datetime(values[0])
+    except Exception:  # malformed headers must never abort a run
         return None
     if parsed.tzinfo is None:
+        # Python leaves a missing or unknown zone naive, and also "-0000" (UTC, origin unknown).
+        if not re.search(r"(?<![\d:])-0000\b", values[0]):
+            return None
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
 

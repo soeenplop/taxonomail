@@ -26,6 +26,7 @@ from taxonomail.classify import (
     FatalClassifyError,
     JevClassifier,
     Verdict,
+    folder_path,
     folder_paths,
     load_taxonomy,
 )
@@ -265,7 +266,8 @@ def classify(
     Writes the folder of every mail to classified.jsonl. Mails whose best folder is less
     likely than [classification] min_probability stay where they are. With --stale-folder,
     a mail at least [relevance] min_age_days old that Jev is sure (min_probability) is no
-    longer worth keeping goes to that folder instead. Nothing moves without --move.
+    longer worth keeping goes to that folder instead, whatever its topic (a newsletter
+    without a clear topic is still a newsletter). Nothing moves without --move.
     """
     _load_env(env_file)
     settings = load_settings(config)
@@ -276,7 +278,7 @@ def classify(
         raise typer.BadParameter("--move needs --imap-host", param_hint="--move")
     folders = list(categories)
     if stale_folder is not None:
-        if not stale_folder.strip(" -./\\%*"):
+        if not folder_path(Category("", stale_folder, "")):
             raise typer.BadParameter("give a folder name", param_hint="--stale-folder")
         folders.append(Category(STALE, stale_folder, ""))
     try:

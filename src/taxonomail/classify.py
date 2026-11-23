@@ -130,7 +130,7 @@ class Classifier(Protocol):
 class _Answer(BaseModel):
     model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
     choice: str
-    probabilities: dict[str, Annotated[float, Field(ge=0, le=1, allow_inf_nan=False)]]
+    probabilities: dict[str, Annotated[float, Field(ge=0, le=1, allow_inf_nan=False, strict=True)]]
 
 
 def _criterion(category: Category) -> dict[str, Any]:
@@ -220,7 +220,7 @@ class JevClassifier:
 
 class _Noul(BaseModel):
     model_config = ConfigDict(extra="ignore", hide_input_in_errors=True)
-    noul: float = Field(ge=0, le=1, allow_inf_nan=False)
+    noul: float = Field(ge=0, le=1, allow_inf_nan=False, strict=True)
 
 
 def _answers(response: httpx2.Response) -> dict[str, Any]:

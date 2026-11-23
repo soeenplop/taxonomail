@@ -70,9 +70,25 @@ def test_forwarded_mail_and_nul_charset() -> None:
     [
         ("Mon, 01 Jan 2024 10:00:00 +0100", datetime(2024, 1, 1, 9, tzinfo=UTC)),
         ("Mon, 01 Jan 2024 10:00:00 -0000", datetime(2024, 1, 1, 10, tzinfo=UTC)),
+        ("Mon, 01 Jan 2024 10:00:00 -0000", datetime(2024, 1, 1, 10, tzinfo=UTC)),
+        ("Mon, 01 Jan 2024 10:00:00 +0000 (UTC)", datetime(2024, 1, 1, 10, tzinfo=UTC)),
+        ("Mon, 01 Jan 2024 10:00:00", None),
+        ("Mon, 01 Jan 2024 10:00:00 CET", None),
+        ("Mon, 01 Jan 2024 10:00:00 XYZ", None),
         ("not a date", None),
         (None, None),
     ],
 )
 def test_date_is_read_in_utc(date: str | None, expected: datetime | None) -> None:
-    assert parse_mail(raw_mail("s", date=date)).date == expected
+    # Raw bytes: building the mail with EmailMessage would already normalize the zone.
+    head = b"" if date is None else b"Date: " + date.encode() + b"\n"
+    raw = head + b"From: a@example.org\nSubject: s\n\nbody"
+    assert parse_mail(raw).date == expected
+
+
+def test_two_dates_mean_no_date() -> None:
+    raw = (
+        b"Date: Mon, 01 Jan 2024 10:00:00 +0000\nDate: Mon, 01 Jan 2099 10:00:00 +0000\n"
+        b"From: a@example.org\nSubject: s\n\nbody"
+    )
+    assert parse_mail(raw).date is None

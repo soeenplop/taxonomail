@@ -401,7 +401,7 @@ def test_stale_folder_takes_old_mail_jev_is_sure_about(
     assert asked[1] is None
 
 
-@pytest.mark.parametrize("name", ["", " / ", "club/Club"])
+@pytest.mark.parametrize("name", ["", " / ", "\t", "club/Club"])
 def test_bad_stale_folder_is_rejected(
     name: str, tmp_path: Path, classifier: FakeClassifier
 ) -> None:

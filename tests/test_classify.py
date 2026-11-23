@@ -279,7 +279,10 @@ def test_no_relevance_question_unless_asked(run: Path) -> None:
     assert list(bodies[0]["questions"]) == ["folder"]
 
 
-@pytest.mark.parametrize("stale", [None, {"noul": 1.2}, {"noul": "yes"}, {"type": "noul"}])
+@pytest.mark.parametrize(
+    "stale",
+    [None, {"noul": 1.2}, {"noul": "yes"}, {"noul": True}, {"noul": "0.95"}, {"type": "noul"}],
+)
 def test_bad_relevance_answer_fails_the_mail(stale: object, run: Path) -> None:
     def handler(request: httpx2.Request) -> httpx2.Response:
         data = json.loads(answer("club", {"club": 1.0}).content)
